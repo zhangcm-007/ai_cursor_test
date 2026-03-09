@@ -1,0 +1,29 @@
+# macOS
+__MACOSX/
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+.eggs/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# 环境与本地配置
+.env
+.env.local
+*.local

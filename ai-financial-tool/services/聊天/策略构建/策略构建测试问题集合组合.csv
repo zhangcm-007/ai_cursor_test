@@ -1,0 +1,216 @@
+question,investment_asset_and_type
+Build a value investing strategy focusing on low PE ratios.,Investment Target: Stocks; Investment Style: Value Investing
+Construct a screening strategy using both PE and PB ratios.,Investment Target: Stocks; Investment Style: Value Investing
+Create a factor model with MarketCap/EBITDA as the primary value signal.,Investment Target: Stocks; Investment Style: Value Investing
+"Generate a composite value score using PE, PB, and MarketCap/EBITDA.",Investment Target: Stocks; Investment Style: Value Investing
+Develop a ranking strategy that prioritizes low PB stocks with stable earnings.,Investment Target: Stocks; Investment Style: Value Investing
+"Build a strategy applying 1m, 3m, 6m, and 12m rolling PE averages.",Investment Target: Stocks; Investment Style: Value Investing
+Build a filter that excludes companies with rising PE averages across all horizons.,Investment Target: Stocks; Investment Style: Value Investing
+Construct a strategy that dynamically shifts weights between PE and PB depending on market conditions.,Investment Target: Stocks; Investment Style: Value Investing
+Build a regime-based model overweighting MarketCap/EBITDA when interest rates are high.,Investment Target: Stocks; Investment Style: Value Investing
+Generate a factor allocation rule that increases PB weight during credit spread widening.,Investment Target: Stocks; Investment Style: Value Investing
+Develop a volatility-adjusted strategy that leans more on stable PE/PB when markets are turbulent.,Investment Target: Stocks; Investment Style: Value Investing
+Build a value strategy that screens out micro-cap stocks to reduce risk.,Investment Target: Stocks; Investment Style: Value Investing
+Build a growth investing strategy focusing on revenue and earnings CAGR.,Investment Target: Stocks; Investment Style: Growth Investing
+Create a growth model using PEG ratio as the primary factor.,Investment Target: Stocks; Investment Style: Growth Investing
+Build a growth strategy that balances high CAGR with sustainable profit margins.,Investment Target: Stocks; Investment Style: Growth Investing
+Construct a model that penalizes companies with deteriorating ROE despite strong growth.,Investment Target: Stocks; Investment Style: Growth Investing
+"Build a two-stage model: rank by PEG first, then validate with ROE momentum.",Investment Target: Stocks; Investment Style: Growth Investing
+Construct a strategy using reinvestment ratio as a check on long-term scalability.,Investment Target: Stocks; Investment Style: Growth Investing
+Build a growth portfolio that includes ROE as a stability factor.,Investment Target: Stocks; Investment Style: Growth Investing
+Generate a model that rewards firms with both high CAGR and high reinvestment ratios.,Investment Target: Stocks; Investment Style: Growth Investing
+Build a growth strategy that shifts weight toward ROE momentum during bull markets.,Investment Target: Stocks; Investment Style: Growth Investing
+Construct a model that reduces exposure to high-PEG companies when interest rates rise.,Investment Target: Stocks; Investment Style: Growth Investing
+"Create a growth strategy that rebalances CAGR, PEG, and ROE momentum quarterly.",Investment Target: Stocks; Investment Style: Growth Investing
+Build a high dividend strategy focusing on stocks with strong dividend yield.,Investment Target: Stocks; Investment Style: Dividend Investing
+Construct a screening model based on dividend payout ratio and dividend yield together.,Investment Target: Stocks; Investment Style: Dividend Investing
+Create a factor model that balances dividend yield with low PE ratios.,Investment Target: Stocks; Investment Style: Dividend Investing
+Develop a ranking system that emphasizes sustainable and attractive dividend yields.,Investment Target: Stocks; Investment Style: Dividend Investing
+Build a high dividend strategy that removes companies with unsustainably high payout ratios.,Investment Target: Stocks; Investment Style: Dividend Investing
+Construct a model that rewards stable dividend growth over multiple years.,Investment Target: Stocks; Investment Style: Dividend Investing
+Create a high dividend screen focusing on companies with strong balance sheets.,Investment Target: Stocks; Investment Style: Dividend Investing
+"Build a two-stage strategy: rank by dividend yield first, then filter with payout ratio limits.",Investment Target: Stocks; Investment Style: Dividend Investing
+Construct a strategy that integrates market cap to avoid micro-cap dividend traps.,Investment Target: Stocks; Investment Style: Dividend Investing
+Build a dividend strategy that applies log market cap weighting to reduce concentration risk.,Investment Target: Stocks; Investment Style: Dividend Investing
+Create a factor model that blends dividend yield with PB for valuation balance.,Investment Target: Stocks; Investment Style: Dividend Investing
+Build a dividend strategy that shifts exposure toward lower PE stocks in rising rate environments.,Investment Target: Stocks; Investment Style: Dividend Investing
+ How can I test if companies with higher Dividend Yield outperform those with lower yields,Investment Target: Stocks; Investment Style: Dividend Investing
+ I want to compare the performance of high Dividend Yield stocks vs. low PE dividend stocks. Can you run this test,Investment Target: Stocks; Investment Style: Dividend Investing
+ How do I design a strategy that invests in companies with consistent dividend growth and backtest it,Investment Target: Stocks; Investment Style: Dividend Investing
+ Can you simulate a portfolio that picks the top 10% of stocks by Dividend Yield,Investment Target: Stocks; Investment Style: Dividend Investing
+ I want to combine Dividend Yield and PB ratio into one model. How would this perform historically,Investment Target: Stocks; Investment Style: Dividend Investing
+ How do I backtest a strategy that selects only large-cap dividend stocks with strong payout ratios,Investment Target: Stocks; Investment Style: Dividend Investing
+ Can I test whether using log Market Cap improves results for a dividend strategy compared to regular Market Cap,Investment Target: Stocks; Investment Style: Dividend Investing
+ I want to see how a strategy built on Dividend Yield + PE would have performed over the last 10 years.,Investment Target: Stocks; Investment Style: Dividend Investing
+ Can you compare the backtest results of a pure Dividend Yield strategy vs. a Dividend Yield + PB strategy,Investment Target: Stocks; Investment Style: Dividend Investing
+ I want to build a strategy that balances Dividend Yield with payout sustainability. Can you backtest this idea,Investment Target: Stocks; Investment Style: Dividend Investing
+ How do I test if low PE dividend stocks produce better risk-adjusted returns than high PE dividend stocks,Investment Target: Stocks; Investment Style: Dividend Investing
+" I want to construct a multi-factor dividend model using Dividend Yield, Payout Ratio, and Market Cap. Can you run a backtest",Investment Target: Stocks; Investment Style: Dividend Investing
+ How can I test if companies with rising Dividend Yield over time outperform those with flat yields,Investment Target: Stocks; Investment Style: Dividend Investing
+" Choose S&P 500 index funds (e.g., SPY or VOO) as the investment target. Invest $500 weekly, ignore market fluctuations, and hold for the long term.",Investment Target: ETF; Investment Style: DCA
+" Choose technology sector ETFs (e.g., QQQ or XLK) as the investment target. Invest $1,000 quarterly, continue investing in tech ETFs without actively buying or selling.",Investment Target: ETF; Investment Style: DCA
+" Choose high-dividend stock ETFs (e.g., VIG or DVY) as the investment target. Invest $2,000 annually, focusing on assets with a dividend growth rate of over 5%.",Investment Target: ETF; Investment Style: DCA
+" Choose S&P 500 index funds (e.g., SPY) and gold ETFs (e.g., GLD) as the investment targets. Invest $3,000 quarterly, adjusting the allocation based on inflation expectations (e.g., 60% stocks, 40% gold).",Investment Target: ETF; Investment Style: DCA
+" Choose real estate ETFs (e.g., VNQ or SCHH) as the investment target. Invest $1,200 quarterly.",Investment Target: ETF; Investment Style: DCA
+" Invest in small-cap value stocks (e.g., IWS or VNQ) as the investment target. Invest $300 weekly, focus on undervalued companies with strong fundamentals, and hold for 5+ years to capitalize on long-term growth.",Investment Target: Stocks; Investment Style: DCA
+" Pair an emerging market ETF (e.g., EEM) with a U.S. Treasury ETF (e.g., TLT) as the investment targets. Invest $2,000 quarterly, allocate 50% to emerging markets and 50% to Treasuries, and adjust the ratio based on interest rate trends.",Investment Target: ETF; Investment Style: DCA
+" Pair a sector-specific ETF (e.g., XLK for tech) with high-quality individual stocks (e.g., Apple or Microsoft) as the investment targets. Invest $1,200 monthly, and hold individual stocks for long-term value.",Investment Target: ETF and Stocks; Investment Style: DCA
+" Combine a high-dividend ETF (e.g., DVY) with high-yield stocks (e.g., utilities or REITs) as the investment targets. Invest $1,000 monthly, allocate 70% to ETFs and 30% to individual stocks",Investment Target: ETF and Stocks; Investment Style: DCA
+" Combine a global equity ETF (e.g., VXUS) and a domestic stock ETF as the investment targets. Invest $2,500 quarterly, allocate 60% to global markets and 40% to U.S. stocks, and rebalance quarterly.",Investment Target: ETF; Investment Style: DCA
+" Use the 20-day and 50-day moving average crossover of the S&P 500 ETF (SPY) to identify trends. Buy when the short-term moving average crosses above the long-term moving average, and sell when it crosses below to capture market trend shifts.",Investment Target: ETF; Investment Style: Momentum
+" Use the MACD histogram (12/26/9 periods) of the Energy Sector ETF (XLE). Buy when the histogram turns positive and remains rising, and sell when it turns negative and declines to identify shifts in price momentum.",Investment Target: ETF; Investment Style: Momentum
+" Base decisions on the 10-day, 60-day, and 250-day moving averages of SPY. Buy when the 10-day MA stays above the 60-day and 250-day MAs, and sell otherwise to capture long-term trends.",Investment Target: ETF; Investment Style: Momentum
+" Combine historical price trends, RSI, MACD, and Bollinger Bands of global ETFs (e.g., SPY, QQQ, EFA). Use a multi-factor score to buy when the score exceeds a threshold and sell when it drops below, improving decision efficiency.",Investment Target: ETF; Investment Style: Momentum
+" Use Bollinger Bands (20-period, 2 standard deviations)  for Chinese A-shares (e.g., BABA, JD). Buy when prices break above the upper band, and sell when prices fall below the lower band.",Investment Target: Stocks; Investment Style: Momentum
+" Use the 20-day and 50-day moving average crossovers of TSLA and AAPL. Buy when the short-term MA crosses above the long-term MA, and sell when it crosses below to capture high-volatility trends in tech stocks.",Investment Target: Stocks; Investment Style: Momentum
+" Use the 10-day, 50-day, and 120-day moving averages of Nasdaq 100 components (e.g., MSFT, NVDA). Buy when the 10-day MA crosses above the 50-day and 120-day MAs and prices stabilize above the 120-day MA, and sell otherwise.",Investment Target: Stocks; Investment Style: Momentum
+" Use the 14-day RSI (threshold 30/70) and 20-day moving averages for high-dividend stocks (e.g., AXP, XOM). Buy when RSI falls below 30 and MAs are in a bull trend, and sell when RSI exceeds 70 or MAs turn bearish.",Investment Target: Stocks; Investment Style: Momentum
+" Monitor the MACD histogram of tech stocks (e.g., NVDA, AMZN) and the QQQ ETF. Buy when both the stock and ETF show a MACD histogram turnaround from negative to positive, and sell when both turn negative to reduce single-asset risk.",Investment Target: ETF and Stocks; Investment Style: Momentum
+" Use the 12-month momentum rank to select top-performing ETFs (e.g., SPY, QQQ, XLK). Buy when the 10-day moving average crosses above the 50-day moving average�� and sell when the 10-day MA crosses below the 50-day MA or RSI exceeds 80 to lock in gains and avoid overbought conditions.",Investment Target: ETF; Investment Style: Momentum
+" For tech stocks (e.g., AAPL, MSFT), use Bollinger Bands (20-period, 2 standard deviations). Buy when the price breaks above the upper band, and sell when the price retests the middle band or key support level (e.g., 20-day MA) to capture short-term volatility.",Investment Target: Stocks; Investment Style: Swing
+" Base decisions on the 14-day RSI for consumer stocks (e.g., KO, PG). Buy at lower points (RSI below 40) and sell at higher points (RSI above 60) when RSI swings between 30 and 70, leveraging its cyclical movements.",Investment Target: Stocks; Investment Style: Swing
+" Combine MACD (12/26/9) and RSI (14-day) for energy stocks (e.g., XOM, CVX). Buy when the MACD histogram turns positive and RSI drops below 30, and sell when the MACD histogram turns negative and RSI rises above 70 to filter false signals with dual confirmation.",Investment Target: Stocks; Investment Style: Swing
+" Use the 10-day/50-day/200-day moving averages for global leaders (e.g., AAPL, GOOGL). Buy when the price swings below the 10-day MA and sell when it crosses above the 50-day MA",Investment Target: Stocks; Investment Style: Swing
+" For consumer sector ETFs (e.g., XLY), use the 14-day RSI. Buy when RSI is below 40 and sell when it exceeds 60, combining RSI swings (30�C70 range) ",Investment Target: ETF; Investment Style: Swing
+" Use Bollinger Bands (20-period, 2 standard deviations) and the 20-day MA for SPY and QQQ. Buy when the price breaks above the upper band and the 20-day MA is in a bullish lineup, and sell when it retests the middle band or breaches the 20-day MA to capture mid-term trend waves.",Investment Target: ETF; Investment Style: Swing
+" Combine 14-day RSI (threshold 30/70)  for tech stocks (e.g., AAPL, NVDA) and ETFs (e.g., XLK, QQQ). Buy when RSI drops below 30 , and sell when RSI rises above 70 to confirm swing highs/lows.",Investment Target: ETF and Stocks; Investment Style: Swing
+" Use RSI (14-period) and ADX (14-period) to identify high-probability swing trades. Buy when RSI is below 30 (oversold) and ADX is above 20 (confirming a strong trend), and exit when RSI rises above 70 (overbought) or ADX declines below 20 (trend weakening), focusing on trending markets with clear momentum.",Investment Target: ETF; Investment Style: Swing
+" Combine RSI (14-period) and CCI (20-period) to capture intraday or swing opportunities. Buy when RSI is below 30 and CCI is below -100 (severe oversold), and sell when RSI exceeds 70 or CCI crosses above +100 (overbought), leveraging CCI��s ability to detect price divergence and RSI��s overbought/oversold signals.",Investment Target: ETF; Investment Style: Swing
+" Use ADX (14-period) to filter for strong trends and CCI (20-period) to identify reversal points. Buy when ADX is above 25 (trend strength) and CCI turns positive from below -100 (early reversal), and sell when ADX drops below 20 or CCI dips below -100 (trend exhaustion), combining trend confirmation with reversal timing for divergent opportunities.",Investment Target: ETF; Investment Style: Swing
+"Help me design a long-term dollar-cost averaging strategy for investing in a US small-cap value ETF (e.g., VBR).",Investment Target: ETF; Investment Style: Dollar-Cost Averaging
+Help me design a momentum rotation ETF strategy between the S&P 500 and the Nasdaq 100.,Investment Target: ETF; Investment Style: Momentum Trading
+"Help me design a portfolio strategy for investing in the 'big three' cloud service providers (Amazon, Microsoft, Google).",Investment Target: Stocks; Investment Style: Growth Investing
+Generate a Dividend Aristocrat strategy for high-dividend US stocks.,Investment Target: Stocks; Investment Style: Dividend
+Please design a high-dividend reinvestment strategy for US utility stocks.,Investment Target: Stocks; Investment Style: High-Dividend Reinvestment
+Please provide a value-growth strategy for US banking stocks.,Investment Target: Stocks; Investment Style: Value-Growth
+Generate a momentum-chasing strategy for a US growth ETF.,Investment Target: ETF; Investment Style: Momentum Chasing
+I want to implement a dividend stock strategy.,Investment Target: Stocks; Investment Style: Dividend Investing
+I want to start systematic investing in the US stock market from scratch. Please provide me with a long-term dollar-cost averaging (DCA) strategy for investing in S&P 500 ETFs (SPY/VOO).,Investment Target: ETF; Investment Style: Dollar-Cost Averaging Strategy
+"I plan to invest $100,000 for the medium and long term, prioritizing ETFs, and hope to avoid high volatility and pursue stable returns. Is there a suitable strategy for me?",Investment Target: ETF; Investment Style: Valuation-based Dollar-Cost Averaging
+I want to learn Buffett's value investing. Please help me design a strategy to screen for US stocks with 'moats'.,Investment Target: Stocks; Investment Style: Value Investing
+How to build a US stock income portfolio strategy composed of 'Dividend Aristocrats'?,Investment Target: Stocks; Investment Style: High Dividend/Dividend Growth
+How to formulate a 'cigar butt' strategy to specifically invest in undervalued or even net-break (P/B < 1) US stocks?,Investment Target: Stocks; Investment Style: Deep Value Investing
+Help me generate a value investing strategy for US tech stocks.,Investment Target: Stocks; Investment Style: Value Investing
+Please provide a US stock value investing strategy based on Free Cash Flow (FCF).,Investment Target: Stocks; Investment Style: Value Investing
+How to find 'GARP' type US stocks with stable earnings growth but reasonable valuations? Please provide a stock selection strategy.,Investment Target: Stocks; Investment Style: GARP (Growth At a Reasonable Price)
+Give me a screening standard to find value-type US stocks with a P/E ratio below 15 and a dividend yield above 4%.,Investment Target: Stocks; Investment Style: Value Investing/High Dividend
+"To create a strategy for investing in 'turnaround' US stocks, what screening indicators are needed?",Investment Target: Stocks; Investment Style: Contrarian Investing/Value Investing
+Give me a quality factor stock selection strategy for US consumer stocks.,Investment Target: Stocks; Investment Style: Quality Factor Selection
+Give me a value discovery strategy for US small-cap stocks.,Investment Target: Stocks; Investment Style: Value Discovery
+Generate a factor quality strategy for US large-cap stocks.,Investment Target: Stocks; Investment Style: Factor Quality
+Give me a value-factor-dominant strategy for US large-cap stocks.,Investment Target: Stocks; Investment Style: Value Factor Dominant
+How to use 'Shareholder Yield' (Dividend Yield + Buyback Rate) to screen US stocks?,Investment Target: Stocks; Investment Style: Value Investing/Quality Investing
+"I want to invest in US companies with pricing power. Which financial indicators should I look at, and how should the strategy be formulated?",Investment Target: Stocks; Investment Style: Value Investing/Moat
+"How to use 'DuPont analysis' to break down ROE and screen for high-quality, high-profitability US companies?",Investment Target: Stocks; Investment Style: Quality Investing/Fundamental Analysis
+"How to screen for companies where 'cash is king', i.e., US companies with a high ratio of cash and equivalents to market capitalization?",Investment Target: Stocks; Investment Style: Value Investing/Quality Investing
+"I want to invest in consumer goods companies with strong brand effects (like Coca-Cola, Nike). What is the strategy?",Investment Target: Stocks; Investment Style: Value Investing/Brand Value
+How to screen for small-cap US tech stocks with revenue growth exceeding 20% for three consecutive years? Please provide a specific strategy.,Investment Target: Stocks; Investment Style: Growth Investing/Small Cap
+"For the US electric vehicle (EV) industry chain, how to formulate a portfolio investment strategy that includes upstream, midstream, and downstream sectors?",Investment Target: Stocks; Investment Style: Thematic Investing/Growth Investing
+"Help me design a screening strategy to find future 'ten-bagger' US growth stocks, accepting high risk.",Investment Target: Stocks; Investment Style: High Risk/Growth Investing
+I'm optimistic about the future of biotech. How can I formulate a strategy to invest in innovative US pharmaceutical companies and manage the risks well?,Investment Target: Stocks; Investment Style: Thematic Investing/Venture Capital
+"Please provide an investment strategy focusing on US companies with excellent ESG (Environmental, Social, and Governance) performance.",Investment Target: Stocks; Investment Style: ESG Investing/Thematic Investing
+How to formulate a short-term US stock trading strategy based on the Earnings Season?,Investment Target: Stocks; Investment Style: Event-Driven
+Help me create a growth factor screening strategy for US tech stocks.,Investment Target: Stocks; Investment Style: Growth Factor Screening
+Give me a growth acceleration strategy for US tech stocks.,Investment Target: Stocks; Investment Style: Growth Acceleration
+Give me a cyclical trading strategy for investing in US airline stocks.,Investment Target: Stocks; Investment Style: Cyclical Investing
+Formulate a US stock selection strategy based on Peter Lynch's investment philosophy to find a 'tenbagger'.,Investment Target: Stocks; Investment Style: Growth Investing/Value Investing
+Give me a US growth stock selection strategy based on the 'CAN SLIM' model.,Investment Target: Stocks; Investment Style: Growth Investing
+Give me a long-term holding strategy for investing in large US tech blue-chip stocks (FAANG).,Investment Target: Stocks; Investment Style: Growth Investing/Long-term Hold
+"Please give me a US stock trading strategy based on the golden cross signal of MA moving averages (e.g., 50-day MA crossing above 200-day MA).",Investment Target: Stocks; Investment Style: Technical Analysis/Trend Following
+How to use the golden crosses and dead crosses of the KDJ indicator to formulate a swing trading strategy for US blue-chip stocks?,Investment Target: Stocks; Investment Style: Technical Analysis/Swing Trading
+Please design a US energy stock trading strategy based on MACD crossovers.,Investment Target: Stocks; Investment Style: Technical Analysis/MACD Crossover
+Help me create a mean reversion strategy for US small-cap stocks.,Investment Target: Stocks; Investment Style: Mean Reversion
+How to use MACD divergence signals to find buy and sell points for individual US stocks? Please provide a specific strategy.,Investment Target: Stocks; Investment Style: Technical Analysis/Trend Reversal
+How to combine volume and price breakthroughs to formulate an effective 'chasing the rise' strategy for US stocks?,Investment Target: Stocks; Investment Style: Technical Analysis/Momentum Trading
+Help me create a US financial stock strategy based on EMA crossovers.,Investment Target: Stocks; Investment Style: Technical Analysis/EMA Crossover
+Please design a trend-following strategy for US energy stocks.,Investment Target: Stocks; Investment Style: Trend Following
+Give me a US small-cap stock strategy based on the CCI indicator.,Investment Target: Stocks; Investment Style: Technical Analysis/CCI Indicator
+Please design a US industrial stock strategy based on the Williams %R indicator.,Investment Target: Stocks; Investment Style: Technical Analysis/Williams %R
+Help me create a US energy stock strategy based on the ROC (Rate of Change) indicator.,Investment Target: Stocks; Investment Style: Technical Analysis/ROC Indicator
+How to formulate a dynamic stop-loss method based on the ATR indicator for my US stock trading strategy?,Investment Target: Stocks; Investment Style: Risk Management/ATR Stop-loss
+Help me create an intraday trading strategy for US stocks based on VWAP (Volume-Weighted Average Price).,Investment Target: Stocks; Investment Style: Quantitative Trading/VWAP
+Please design a breakout strategy for US industrial stocks based on the Donchian Channel.,Investment Target: Stocks; Investment Style: Technical Analysis/Donchian Channel
+Help me create a US energy stock strategy based on the Keltner Channel.,Investment Target: Stocks; Investment Style: Technical Analysis/Keltner Channel
+Please design a 'chasing the rise' strategy for US consumer stocks based on the Momentum indicator.,Investment Target: Stocks; Investment Style: Technical Analysis/Momentum Trading
+Give me a technical breakout strategy for US small-cap stocks.,Investment Target: Stocks; Investment Style: Technical Breakout
+Please design a trend strategy for US financial stocks based on the Supertrend indicator.,Investment Target: Stocks; Investment Style: Technical Analysis/Supertrend
+Help me formulate an intraday trading strategy for US energy stocks based on Pivot Points.,Investment Target: Stocks; Investment Style: Technical Analysis/Pivot Point
+Help me create a US consumer stock strategy based on the TRIX (Triple Exponentially Smoothed Moving Average) indicator.,Investment Target: Stocks; Investment Style: Technical Analysis/TRIX
+How to use Fibonacci retracement levels to find pullback buying points for a US stock in an uptrend?,Investment Target: Stocks; Investment Style: Technical Analysis/Swing Trading
+Give me a momentum breakout strategy for US small-cap stocks.,Investment Target: Stocks; Investment Style: Momentum Breakout
+Help me design a simplified version of the 'Turtle Trading' rules for US stocks to capture long-term trends.,Investment Target: Stocks; Investment Style: Technical Analysis/Trend Following
+I want to start dollar-cost averaging into the broad US market from scratch. Please give me a long-term strategy for regularly investing in an S&P 500 ETF (SPY/VOO).,Investment Target: ETF; Investment Style: Regular Dollar-Cost Averaging
+"How to formulate a 'smart dollar-cost averaging' strategy for the Nasdaq 100 ETF (QQQ), investing more when market valuation is low and less when it's high?",Investment Target: ETF; Investment Style: Valuation-based Dollar-Cost Averaging
+I want to invest $500 monthly. Please provide a portfolio strategy composed of 3-4 different types of US ETFs.,Investment Target: ETF; Investment Style: Regular Dollar-Cost Averaging/Diversification
+Formulate a 'value averaging' strategy for investing in US ETFs. What are its pros and cons compared to dollar-cost averaging?,Investment Target: ETF; Investment Style: Value Averaging Strategy
+"How to formulate a rotation strategy among US sector ETFs like Technology (XLK), Financials (XLF), and Health Care (XLV)?",Investment Target: ETF; Investment Style: Sector Rotation
+I want to invest in gold and silver. Please provide a strategy for dollar-cost averaging or swing trading using precious metals ETFs.,Investment Target: ETF; Investment Style: Commodity Investing
+"Help me design an ETF version of the 'Dogs of the Dow' strategy for US stocks, annually buying the few worst-performing sector ETFs from the past year.",Investment Target: ETF; Investment Style: Contrarian Investing/Rotation Strategy
+How to use a high-dividend ETF (like VYM) and a US Treasury ETF (like TLT) to build a stock-bond rotation strategy?,Investment Target: ETF; Investment Style: Asset Rotation
+"Formulate a strategy to track the semiconductor industry cycle, using a semiconductor ETF (like SOXX) for investment.",Investment Target: ETF; Investment Style: Thematic Investing/Cyclical Investing
+How to formulate a strategy to earn real estate rental income by investing in Real Estate Investment Trust ETFs (REITs ETFs)?,Investment Target: ETF; Investment Style: Real Estate Investing/Income
+Please provide a hedging strategy for a US bear market using inverse ETFs.,Investment Target: ETF; Investment Style: Inverse ETF/Hedging
+"Generate a strategy to amplify returns in a US bull market using leveraged ETFs, and include a risk warning.",Investment Target: ETF; Investment Style: Leveraged Amplification/High Risk
+Help me formulate a momentum reversal strategy for US tech ETFs.,Investment Target: ETF; Investment Style: Momentum Reversal
+Please provide a sustainable investing strategy using US ESG ETFs.,Investment Target: ETF; Investment Style: Sustainable Investing/ESG
+Help me formulate a dividend reinvestment strategy for US high-dividend ETFs.,Investment Target: ETF; Investment Style: Dividend Reinvestment
+How to perform style rotation using small-cap value ETFs (like AVUV) and small-cap growth ETFs?,Investment Target: ETF; Investment Style: Style Rotation
+How to use emerging market ETFs (like EEM) and developed market ETFs (like EFA) for regional rotation allocation?,Investment Target: ETF; Investment Style: Regional Rotation
+How to use ETFs to replicate a simplified 'value + momentum' dual-factor investment strategy?,Investment Target: ETF; Investment Style: Smart Beta/Factor Investing
+Help me design a strategy for investing in defense industry ETFs to respond to geopolitical risks.,Investment Target: ETF; Investment Style: Thematic Investing/Event-Driven
+How to use the weekly golden cross of the KDJ indicator to formulate a medium-to-long-term buying strategy for US ETFs?,Investment Target: ETF; Investment Style: Technical Analysis/Trend Following
+Give me a strategy for long-term swing trading of the Nasdaq 100 ETF based on weekly MACD signals.,Investment Target: ETF; Investment Style: Technical Analysis/Long-term Swing
+Formulate a 'buy the dip' strategy of only purchasing a broad market ETF when the S&P 500 Index's RSI is below 30.,Investment Target: ETF; Investment Style: Technical Analysis/Contrarian Investing
+Help me create a US tech ETF strategy based on RSI divergence.,Investment Target: ETF; Investment Style: Technical Analysis/RSI Divergence
+Give me a high-liquidity trading strategy for a broad US market ETF.,Investment Target: ETF; Investment Style: High-Liquidity Trading
+Help me create a US consumer ETF strategy based on OBV (On-Balance Volume).,Investment Target: ETF; Investment Style: Technical Analysis/OBV
+Give me a US energy ETF strategy that uses a combination of technical indicators.,Investment Target: ETF; Investment Style: Technical Indicator Combination
+Give me a swing trading strategy for a US banking ETF.,Investment Target: ETF; Investment Style: Swing Trading
+Help me create a US tech stock strategy based on the Bollinger Band Squeeze.,Investment Target: ETF; Investment Style: Technical Analysis/Bollinger Band Squeeze
+Help me create a US consumer ETF strategy based on the Stochastic RSI.,Investment Target: ETF; Investment Style: Technical Analysis/Stochastic RSI
+Help me formulate a technical stop-loss strategy for a US small-cap ETF.,Investment Target: ETF; Investment Style: Risk Management/Technical Stop-loss
+Help me create a US energy ETF strategy based on the Klinger Oscillator.,Investment Target: ETF; Investment Style: Technical Analysis/Klinger Oscillator
+Please design a US financial ETF strategy based on Chaikin Volatility.,Investment Target: ETF; Investment Style: Technical Analysis/Chaikin Volatility
+Give me a US consumer ETF strategy using the KDJ technical indicator.,Investment Target: ETF; Investment Style: Technical Analysis/KDJ Indicator
+Help me create a US industrial ETF strategy based on MACD.,Investment Target: ETF; Investment Style: Technical Analysis/MACD
+Help me design a high-dividend-yield strategy for a US banking ETF.,Investment Target: ETF; Investment Style: High Dividend
+Generate a factor investing strategy for a multi-asset US stock portfolio.,Investment Target: ETF; Investment Style: Factor Investing
+Please provide a volatility trading strategy using a US VIX ETF.,Investment Target: ETF; Investment Style: Volatility Trading
+Generate a thematic investing strategy for a US new energy ETF.,Investment Target: ETF; Investment Style: Thematic Investing
+Please provide a high-growth-potential strategy for a US technology ETF.,Investment Target: ETF; Investment Style: High Growth
+Help me formulate a short-term momentum trading strategy for US tech stocks.,Investment Target: Stocks; Investment Style: Short-term Momentum Trading
+Please provide a high-volatility arbitrage strategy for US small-cap stocks.,Investment Target: Stocks; Investment Style: High-Volatility Arbitrage
+Help me formulate a long-term mean reversion strategy for US value stocks.,Investment Target: Stocks; Investment Style: Long-term Mean Reversion
+Help me formulate an undervalued screening strategy for US small-cap stocks.,Investment Target: Stocks; Investment Style: Undervalued Screening
+Generate a dividend reinvestment strategy for a US consumer ETF.,Investment Target: ETF; Investment Style: Dividend Reinvestment
+Please provide a long-term holding strategy for a US real estate ETF.,Investment Target: ETF; Investment Style: Long-term Holding
+Generate an index-tracking strategy for a broad-based US ETF.,Investment Target: ETF; Investment Style: Index Tracking
+Help me formulate a rebalancing strategy for a US multi-asset ETF.,Investment Target: ETF; Investment Style: Rebalancing
+Please provide a high-beta investment strategy for a US small-cap ETF.,Investment Target: ETF; Investment Style: High Beta
+Generate a factor rotation strategy for a US multi-factor ETF.,Investment Target: ETF; Investment Style: Factor Rotation
+Generate a portfolio strategy for high-growth ETFs.,Investment Target: ETF; Investment Style: High Growth
+Please provide a high-dividend-yield strategy for a US real estate ETF.,Investment Target: ETF; Investment Style: High Dividend Yield
+Give me a high-dividend screening strategy for a US financial ETF.,Investment Target: ETF; Investment Style: High-Dividend Screening
+Generate a low-volatility factor strategy for a US ETF.,Investment Target: ETF; Investment Style: Low-Volatility Factor
+"Help me design a long-term dollar-cost averaging strategy for investing in a US small-cap value ETF (e.g., VBR).",Investment Target: ETF; Investment Style: Factor Investing/Dollar-Cost Averaging
+Formulate a strategy for screening and constructing an optimal US ETF portfolio based on the 'Sharpe Ratio'.,Investment Target: ETF; Investment Style: Quantitative Investing/Asset Allocation
+Help me design a momentum rotation ETF strategy between the S&P 500 and the Nasdaq 100.,Investment Target: ETF; Investment Style: Momentum Trading/Rotation
+"How to use the 'Price-to-Sales' (P/S) Ratio to value and invest in pre-profit, high-growth US tech stocks?",Investment Target: Stocks; Investment Style: Growth Investing
+"Help me design a portfolio strategy for investing in the 'big three' cloud service providers (Amazon, Microsoft, Google).",Investment Target: Stocks; Investment Style: Growth Investing/Industry Leader
+"How to formulate a sector ETF rotation strategy for sectors that perform well during US interest rate hike and cut cycles, respectively?",Investment Target: ETF; Investment Style: Macro Hedging/Sector Rotation
+Generate a Dividend Aristocrat strategy for high-dividend US stocks.,Investment Target: Stocks; Investment Style: Dividend Aristocrats
+Please provide a low-risk arbitrage strategy for US index stocks.,Investment Target: Stocks; Investment Style: Low-Risk Arbitrage
+Please design a high-dividend reinvestment strategy for US utility stocks.,Investment Target: Stocks; Investment Style: High-Dividend Reinvestment
+Generate a low-correlation allocation strategy for a multi-asset US stock portfolio.,Investment Target: Stocks; Investment Style: Low-Correlation Allocation
+Please provide a value-growth strategy for US banking stocks.,Investment Target: Stocks; Investment Style: Value-Growth
+Help me formulate a portfolio diversification strategy for US ETFs.,Investment Target: ETF; Investment Style: Portfolio Diversification
+Please provide a growth-at-a-reasonable-price strategy for a US pharmaceutical ETF.,Investment Target: ETF; Investment Style: Growth-at-a-Reasonable-Price
+Give me a US tech stock strategy confirmed by technical chart patterns.,Investment Target: ETF; Investment Style: Technical Chart Confirmation
+"Please provide a low-risk, high-return strategy for a US value ETF.","Investment Target: ETF; Investment Style: Low Risk, High Return"
+Help me create a value-based dollar-cost averaging strategy for a US index ETF.,Investment Target: ETF; Investment Style: Value-based Dollar-Cost Averaging
+Generate a momentum-chasing strategy for a US growth ETF.,Investment Target: ETF; Investment Style: Momentum Chasing
+Give me a low-risk rebalancing strategy for a US multi-ETF portfolio.,Investment Target: ETF; Investment Style: Low-Risk Rebalancing
+I want to pursue a value investing strategy.,Investment Target: Stocks; Investment Style: Value Investing
+I want to implement a dividend stock strategy.,Investment Target: Stocks; Investment Style: Dividend Investing
+I want to focus on growth investing.,Investment Target: Stocks; Investment Style: Growth Investing
+I want to start systematic investing in the US stock market from scratch. Please provide me with a long-term dollar-cost averaging (DCA) strategy for investing in S&P 500 ETFs (SPY/VOO).,Investment Target: ETF; Investment Style: Dollar-Cost Averaging Strategy

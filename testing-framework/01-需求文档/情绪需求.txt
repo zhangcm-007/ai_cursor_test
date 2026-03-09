@@ -1,0 +1,27 @@
+5.1 工具1====资讯情绪分析工具
+【完成单日情绪分析＋完成整体情绪分析】
+1、直接取每一条新闻ticker_sentiment列中json里面ticker和用户输入ticker一样的标的，取相应的relevance_score(相关性)和ticker_sentiment_score（情绪值）；对relevance_score做筛选，只保留relevance score>0.5的数据条数。
+新闻1（AMZN数据）:
+{
+    "relevance_score": "1.000000",
+    "ticker_sentiment_score": "0.424855",
+    "ticker": "AMZN"
+}
+
+新闻2（AMZN数据）:
+{
+    "relevance_score": "0.593248",
+    "ticker_sentiment_score": "0.024374",
+    "ticker": "AMZN"
+}
+
+2、对单条情绪值做截断约束：
+情绪分约束：截断在[-1, 1]，max(min(ticker_sentiment_score, 1.0), -1.0)
+**说明：**- 这两条数据本身就在[-1, 1]范围内，无需截断 - 如果某条新闻情绪值是1.5，会被截断到1.0- 如果某条新闻情绪值是-1.2，会被截断到-1.0
+
+3、对每日的情绪值进行相关性加权处理： S_daily = Σ(Relevance × Sentiment) / Σ(Relevance)
+（所有新闻事件，每日情绪的总值）
+
+4、根据每日情绪值及权重衰减计算整体区间内情绪值：
+权重衰减公式：      （新闻时间越近权重越高，时间越远权重越低）
+整体区间内情绪值：
