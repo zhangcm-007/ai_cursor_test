@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Requirement {
+  id          String                  @id @default(cuid())
+  title       String
+  content     String                  @default("")
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  testPoints  TestPoint[]
+  attachments RequirementAttachment[]
+}
+
+model RequirementAttachment {
+  id            String      @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  filename      String
+  filePath      String
+  mimeType      String      @default("")
+  size          Int         @default(0)
+  extractedText String?
+  createdAt     DateTime    @default(now())
+}
+
+model TestPoint {
+  id            String      @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  pointId       String
+  description   String
+  type          String      @default("功能")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  testCases     TestCase[]
+}
+
+model TestCase {
+  id            String    @id @default(cuid())
+  testPointId   String
+  testPoint     TestPoint @relation(fields: [testPointId], references: [id], onDelete: Cascade)
+  caseId        String
+  title         String
+  priority      String    @default("P1")
+  preconditions String    @default("")
+  steps         String    @default("")
+  expected      String    @default("")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}

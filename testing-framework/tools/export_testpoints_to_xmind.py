@@ -12,91 +12,100 @@ import re
 import sys
 
 FRAMEWORK_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-POINT_DIR = os.path.join(FRAMEWORK_ROOT, "02-测试点")
+TP_DIR = os.path.join(FRAMEWORK_ROOT, "02-测试点")
 OUTPUT_DIR = os.path.join(FRAMEWORK_ROOT, "04-导出XMind")
 
 
-def parse_testpoints_md(md_path):
-    """解析测试点 Markdown：返回 (标题, [(一级分类, 二级分类, [(测试点ID, 描述, 说明)], ...)])"""
+def _parse_table_rows(table_rows):
+    """表格行转成子节点列表 [(标题, [])]。跳过表头行。"""
+    nodes = []
+    for row in table_rows:
+        if not row or not any(r for r in row):
+            continue
+        first = row[0].strip()
+        second = row[1].strip() if len(row) > 1 else ""
+        if "测试点ID" in first or "需求对应" in first or first == "---":
+            continue
+        if first and second:
+            nodes.append((f"{first} | {second[:80]}", []))
+        elif first:
+            nodes.append((first[:120], []))
+    return nodes
+
+
+def parse_testpoint_md(md_path):
+    """解析测试点 Markdown，返回 (根标题, 树)。树为 [(section_title, [(sub_title, [(node_title, [])])])]。"""
     with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    title_match = re.search(r"^#\s+测试点\s*-\s*(.+)$", content, re.MULTILINE)
-    title = title_match.group(1).strip() if title_match else "测试点"
+    title_match = re.search(r"^#\s+测试点\s*[-–—]\s*(.+)$", content, re.MULTILINE)
+    root_title = title_match.group(1).strip() if title_match else "测试点"
 
-    # 从 ## 详细测试点 开始解析
-    detail_match = re.search(r"##\s+详细测试点\s*\n(.*)", content, re.DOTALL)
-    block = detail_match.group(1) if detail_match else content
-
-    # 按 ### 一、 或 ### 二、 分割一级分类
-    sections = re.findall(
-        r"###\s+([^\n]+)\s*\n\n(.*?)(?=\n###\s+|\n---\s*\n|\Z)",
-        block,
-        re.DOTALL,
-    )
-    tree = []  # [(一级名, [(二级名, [(tp_id, desc, note)])])]
-
-    for sec1_name, sec1_body in sections:
-        sec1_name = sec1_name.strip()
-        # 找 #### 二级标题
-        sub_sections = re.findall(
-            r"####\s+([^\n]+)\s*\n\n(.*?)(?=\n####\s+|\n###\s+|\Z)",
-            sec1_body,
-            re.DOTALL,
-        )
-        if sub_sections:
-            sec1_children = []
-            for sec2_name, sec2_body in sub_sections:
-                rows = parse_table_rows(sec2_body)
-                sec1_children.append((sec2_name.strip(), rows))
-            tree.append((sec1_name, sec1_children))
+    # 收集 (level, heading) 和紧跟着的 table
+    items = []
+    lines = content.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if re.match(r"^#+\s+", line):
+            level = len(line) - len(line.lstrip("#"))
+            heading = line.lstrip("#").strip()
+            i += 1
+            table_rows = []
+            while i < len(lines) and re.match(r"^\|", lines[i]) and "---" not in lines[i]:
+                cells = [c.strip() for c in re.split(r"\|", lines[i])[1:-1]]
+                if cells:
+                    table_rows.append(cells)
+                i += 1
+            items.append((level, heading, table_rows))
         else:
-            # 无 ####，直接在一级下解析表格
-            rows = parse_table_rows(sec1_body)
-            tree.append((sec1_name, [("", rows)]))
+            i += 1
 
-    return title, tree
+    # 按层级建树：##(2) -> ###(3) -> ####(4)+table。stack 中 (level, list) 表示该 list 用于追加当前层节点。
+    tree = []
+    stack = [(1, tree)]
 
-
-def parse_table_rows(body):
-    """从表格中解析出 (测试点ID, 描述, 说明) 列表。"""
-    rows = []
-    # 匹配表体行：| xx | xx | xx |
-    for line in body.split("\n"):
-        line = line.strip()
-        if not line.startswith("|") or line.startswith("|--") or "---" in line:
+    for level, heading, table_rows in items:
+        if level < 2:
             continue
-        cells = [c.strip() for c in line.split("|")[1:-1]]
-        if len(cells) >= 2:
-            tp_id = cells[0] if cells[0] and not cells[0].startswith("---") else ""
-            desc = cells[1] if len(cells) > 1 else ""
-            note = cells[2] if len(cells) > 2 else ""
-            if tp_id or desc:
-                rows.append((tp_id, desc, note))
-    return rows
+        row_nodes = _parse_table_rows(table_rows) if table_rows else []
+        node = (heading, row_nodes)
+        while len(stack) > 1 and stack[-1][0] >= level:
+            stack.pop()
+        parent_list = stack[-1][1]
+        parent_list.append(node)
+        stack.append((level, node[1]))
+
+    return root_title, tree
 
 
-def build_outline(title, tree):
-    """生成 XMind 可导入的大纲文本。"""
-    lines = [title]
-    for sec1_name, sec1_children in tree:
-        lines.append("\t" + sec1_name)
-        for sec2_name, rows in sec1_children:
-            if sec2_name:
-                lines.append("\t\t" + sec2_name)
-                prefix = "\t\t\t"
-            else:
-                prefix = "\t\t"
-            for tp_id, desc, note in rows:
-                node = f"{tp_id} {desc}" if tp_id else desc
-                if note:
-                    node += f"（{note}）"
-                lines.append(prefix + node)
+def build_outline_txt(root_title, tree):
+    """生成完整大纲文本（扁平化所有层级）。"""
+    lines = [root_title]
+    for sec_title, sec_children in tree:
+        lines.append("\t" + sec_title)
+        for sub_title, sub_children in sec_children:
+            lines.append("\t\t" + sub_title)
+            for node_title, _ in sub_children:
+                lines.append("\t\t\t" + node_title)
     return "\n".join(lines)
 
 
-def write_xmind(title, tree, output_path):
-    """写入 .xmind 文件。"""
+def _add_children_xmind(parent_topic, tree, xmind_lib):
+    """递归把 tree 加入 parent_topic。"""
+    for title, children in tree:
+        t = parent_topic.addSubTopic()
+        t.setTitle(title[:500] if len(title) > 500 else title)
+        if children:
+            for sub_title, sub_children in children:
+                st = t.addSubTopic()
+                st.setTitle(sub_title[:500] if len(sub_title) > 500 else sub_title)
+                for node_title, _ in sub_children:
+                    st.addSubTopic().setTitle(node_title[:500] if len(node_title) > 500 else node_title)
+
+
+def write_xmind(root_title, tree, output_path):
+    """用 xmind 库写入 .xmind。"""
     try:
         import xmind
     except ImportError:
@@ -105,25 +114,18 @@ def write_xmind(title, tree, output_path):
 
     workbook = xmind.load(output_path) if os.path.exists(output_path) else xmind.Workbook()
     sheet = workbook.getPrimarySheet()
-    sheet.setTitle(title[:31])
+    sheet.setTitle(root_title[:31] if len(root_title) > 31 else root_title)
     root = sheet.getRootTopic()
-    root.setTitle(title)
+    root.setTitle(root_title)
 
-    for sec1_name, sec1_children in tree:
-        t1 = root.addSubTopic()
-        t1.setTitle(sec1_name)
-        for sec2_name, rows in sec1_children:
-            if sec2_name:
-                t2 = t1.addSubTopic()
-                t2.setTitle(sec2_name)
-                parent = t2
-            else:
-                parent = t1
-            for tp_id, desc, note in rows:
-                node_title = f"{tp_id} {desc}" if tp_id else desc
-                if note:
-                    node_title += f"（{note}）"
-                parent.addSubTopic().setTitle(node_title[:500])
+    for sec_title, sec_children in tree:
+        sec_topic = root.addSubTopic()
+        sec_topic.setTitle(sec_title[:500])
+        for sub_title, sub_children in sec_children:
+            sub_topic = sec_topic.addSubTopic()
+            sub_topic.setTitle(sub_title[:500])
+            for node_title, _ in sub_children:
+                sub_topic.addSubTopic().setTitle(node_title[:500])
 
     xmind.save(workbook, output_path)
     return True
@@ -135,26 +137,28 @@ def main():
     if len(sys.argv) > 1:
         md_files = [p for p in sys.argv[1:] if p.endswith(".md")]
     else:
-        if not os.path.isdir(POINT_DIR):
-            print("目录不存在:", POINT_DIR)
+        if not os.path.isdir(TP_DIR):
+            print("目录不存在:", TP_DIR)
             return
         md_files = [
-            os.path.join(POINT_DIR, f)
-            for f in os.listdir(POINT_DIR)
+            os.path.join(TP_DIR, f)
+            for f in os.listdir(TP_DIR)
             if f.endswith(".md") and not f.startswith(".")
         ]
 
     if not md_files:
-        print("未找到测试点 Markdown 文件。")
+        print("未找到测试点 .md 文件。请将测试点放入 02-测试点/ 或指定文件路径。")
         return
 
     for md_path in md_files:
         if not os.path.isfile(md_path):
             continue
         try:
-            title, tree = parse_testpoints_md(md_path)
+            root_title, tree = parse_testpoint_md(md_path)
         except Exception as e:
             print("解析失败", md_path, ":", e)
+            import traceback
+            traceback.print_exc()
             continue
         if not tree:
             print("未解析到测试点结构:", md_path)
@@ -165,11 +169,11 @@ def main():
 
         outline_path = os.path.join(OUTPUT_DIR, f"{safe_name}_xmind_outline.txt")
         with open(outline_path, "w", encoding="utf-8") as f:
-            f.write(build_outline(title, tree))
+            f.write(build_outline_txt(root_title, tree))
         print("已生成大纲:", outline_path)
 
         xmind_path = os.path.join(OUTPUT_DIR, f"{safe_name}.xmind")
-        if write_xmind(title, tree, xmind_path):
+        if write_xmind(root_title, tree, xmind_path):
             print("已生成 XMind:", xmind_path)
         else:
             print("未安装 xmind 库，仅生成大纲。执行: pip install xmind")
