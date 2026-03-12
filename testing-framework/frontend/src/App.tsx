@@ -1,4 +1,4 @@
-import { Layout, Typography } from "antd";
+import { Layout, Menu, Typography } from "antd";
 import { Outlet, useNavigate, useLocation, Routes, Route } from "react-router-dom";
 import {
   DashboardOutlined,
@@ -16,7 +16,7 @@ import TestCaseList from "./pages/TestCaseList";
 import TestCaseDetail from "./pages/TestCaseDetail";
 import ExportPage from "./pages/ExportPage";
 
-const { Header, Content } = Layout;
+const { Sider, Content } = Layout;
 
 const navItems = [
   { key: "/", icon: DashboardOutlined, label: "首页" },
@@ -31,58 +31,47 @@ function AppLayout() {
   const location = useLocation();
   const currentKey = location.pathname === "/" ? "/" : "/" + (location.pathname.split("/")[1] || "");
 
+  const menuItems = navItems.map(({ key, icon: Icon, label }) => ({
+    key,
+    icon: <Icon />,
+    label,
+  }));
+
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Header
+      <Sider
+        width={200}
         style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "0 16px",
           background: "#001529",
-          gap: 0,
+          overflow: "auto",
+          height: "100vh",
+          position: "fixed",
+          left: 0,
+          top: 0,
+          bottom: 0,
         }}
       >
-        <Typography.Title level={5} style={{ margin: 0, color: "#fff", marginRight: 32 }}>
-          测试平台
-        </Typography.Title>
-        <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
-          {navItems.map(({ key, icon: Icon, label }) => {
-            const isActive = currentKey === key;
-            return (
-              <div
-                key={key}
-                onClick={() => navigate(key)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "0 16px",
-                  height: 64,
-                  lineHeight: "64px",
-                  color: "#fff",
-                  cursor: "pointer",
-                  background: isActive ? "rgba(255,255,255,0.1)" : "transparent",
-                  transition: "background 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) e.currentTarget.style.background = "rgba(255,255,255,0.08)";
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) e.currentTarget.style.background = "transparent";
-                }}
-              >
-                <Icon style={{ fontSize: 16 }} />
-                <span>{label}</span>
-              </div>
-            );
-          })}
+        <div style={{ height: 64, display: "flex", alignItems: "center", paddingLeft: 24 }}>
+          <Typography.Title level={5} style={{ margin: 0, color: "#fff" }}>
+            测试平台
+          </Typography.Title>
         </div>
-      </Header>
-      <Content style={{ padding: 24, background: "#f0f2f5", minHeight: "calc(100vh - 64px)" }}>
-        <div style={{ background: "#fff", padding: 24, borderRadius: 8, minHeight: "100%" }}>
-          <Outlet />
-        </div>
-      </Content>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[currentKey]}
+          items={menuItems}
+          onClick={({ key }) => navigate(key)}
+          style={{ borderRight: 0 }}
+        />
+      </Sider>
+      <Layout style={{ marginLeft: 200 }}>
+        <Content style={{ padding: 24, background: "#f0f2f5", minHeight: "100vh" }}>
+          <div style={{ background: "#fff", padding: 24, borderRadius: 8, minHeight: "100%" }}>
+            <Outlet />
+          </div>
+        </Content>
+      </Layout>
     </Layout>
   );
 }

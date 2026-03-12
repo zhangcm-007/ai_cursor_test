@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "react-query";
 import { useParams, Link } from "react-router-dom";
-import { Button, Card, Descriptions, Table, Modal, Form, Input, Space, Typography, message, Checkbox } from "antd";
+import { Button, Card, Descriptions, Table, Modal, Form, Input, Space, Typography, message, Checkbox, Collapse } from "antd";
 import { PlusOutlined, EditOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { requirementsApi } from "../api/requirements";
 import { testPointsApi } from "../api/test-points";
 import { attachmentsApi } from "../api/attachments";
@@ -12,8 +12,16 @@ import type { RequirementAttachment } from "../api/client";
 export default function RequirementDetail() {
   const { id } = useParams<{ id: string }>();
   const [modalOpen, setModalOpen] = useState(false);
-  const [includeHistory, setIncludeHistory] = useState(true);
+  const [includeHistory, setIncludeHistory] = useState(false);
   const [historyCount, setHistoryCount] = useState(5);
+  const [genJobId, setGenJobId] = useState<string | null>(null);
+  const [genJobStatus, setGenJobStatus] = useState<"pending" | "running" | "completed" | "failed" | null>(null);
+  const [genJobResult, setGenJobResult] = useState<{ created: number; attachmentErrors: string[] } | null>(null);
+  const [genJobError, setGenJobError] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [genCasesJobId, setGenCasesJobId] = useState<string | null>(null);
+  const [genCasesJobStatus, setGenCasesJobStatus] = useState<"pending" | "running" | "completed" | "failed" | null>(null);
+  const pollCasesRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [form] = Form.useForm();
   const client = useQueryClient();
 
@@ -33,34 +41,90 @@ export default function RequirementDetail() {
     onError: (e: { response?: { data?: { error?: string } } }) =>
       message.error(e.response?.data?.error ?? "添加失败"),
   });
-  const genPoints = useMutation(
-    () => generateApi.testPoints({ requirementId: id!, includeHistory, historyCount }),
+  const genPointsStart = useMutation(
+    () => generateApi.testPointsStart({ requirementId: id!, includeHistory, historyCount }),
     {
       onSuccess: (data) => {
-        client.invalidateQueries(["requirement", id]);
-        client.invalidateQueries("test-points");
-        message.success(`已生成 ${data.created} 个测试点`);
-        if (data.attachmentErrors?.length)
-          message.warning(`部分附件未解析: ${data.attachmentErrors.join(", ")}`);
+        setGenJobId(data.jobId);
+        setGenJobStatus("pending");
+        setGenJobResult(null);
+        setGenJobError(null);
       },
       onError: (e: { response?: { data?: { error?: string } } }) =>
-        message.error(e.response?.data?.error ?? "生成失败"),
+        message.error(e.response?.data?.error ?? "提交失败"),
     }
   );
-  const genCases = useMutation(
-    () => generateApi.testCases({ requirementId: id!, includeHistory, historyCount }),
+
+  useEffect(() => {
+    if (!genJobId || !id) return;
+    const poll = () => {
+      generateApi.testPointsStatus(genJobId!).then((next) => {
+        setGenJobStatus(next.status);
+        if (next.status === "completed") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setGenJobId(null);
+          if (next.result) setGenJobResult(next.result);
+          client.invalidateQueries(["requirement", id]);
+          client.invalidateQueries("test-points");
+          message.success(`已生成 ${next.result?.created ?? 0} 个测试点`);
+          if (next.result?.attachmentErrors?.length)
+            message.warning(`部分附件未解析: ${next.result.attachmentErrors.join(", ")}`);
+        } else if (next.status === "failed") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setGenJobId(null);
+          setGenJobError(next.error ?? "生成失败");
+          message.error(next.error ?? "生成失败");
+        }
+      }).catch(() => {});
+    };
+    poll();
+    pollRef.current = setInterval(poll, 1500);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [genJobId, id, client]);
+  const genCasesStart = useMutation(
+    () => generateApi.testCasesStart({ requirementId: id!, includeHistory, historyCount }),
     {
       onSuccess: (data) => {
-        client.invalidateQueries(["requirement", id]);
-        client.invalidateQueries("test-cases");
-        message.success(`已生成 ${data.created} 条测试用例`);
-        if (data.attachmentErrors?.length)
-          message.warning(`部分附件未解析: ${data.attachmentErrors.join(", ")}`);
+        setGenCasesJobId(data.jobId);
+        setGenCasesJobStatus("pending");
       },
       onError: (e: { response?: { data?: { error?: string } } }) =>
-        message.error(e.response?.data?.error ?? "生成失败"),
+        message.error(e.response?.data?.error ?? "提交失败"),
     }
   );
+
+  useEffect(() => {
+    if (!genCasesJobId || !id) return;
+    const poll = () => {
+      generateApi.testCasesStatus(genCasesJobId!).then((next) => {
+        setGenCasesJobStatus(next.status);
+        if (next.status === "completed") {
+          if (pollCasesRef.current) clearInterval(pollCasesRef.current);
+          pollCasesRef.current = null;
+          setGenCasesJobId(null);
+          client.invalidateQueries(["requirement", id]);
+          client.invalidateQueries("test-cases");
+          message.success(`已生成 ${next.result?.created ?? 0} 条测试用例`);
+          if (next.result?.attachmentErrors?.length)
+            message.warning(`部分附件未解析: ${next.result.attachmentErrors.join(", ")}`);
+        } else if (next.status === "failed") {
+          if (pollCasesRef.current) clearInterval(pollCasesRef.current);
+          pollCasesRef.current = null;
+          setGenCasesJobId(null);
+          message.error(next.error ?? "生成失败");
+        }
+      }).catch(() => {});
+    };
+    poll();
+    pollCasesRef.current = setInterval(poll, 10000);
+    return () => {
+      if (pollCasesRef.current) clearInterval(pollCasesRef.current);
+    };
+  }, [genCasesJobId, id, client]);
 
   if (!id) return null;
   if (isLoading || !requirement) return <div>加载中...</div>;
@@ -91,22 +155,26 @@ export default function RequirementDetail() {
             {new Date(requirement.updatedAt).toLocaleString("zh-CN")}
           </Descriptions.Item>
         </Descriptions>
-        <Space>
+        <Space wrap>
           <Button
             type="primary"
             icon={<ThunderboltOutlined />}
-            loading={genPoints.isLoading}
-            onClick={() => genPoints.mutate()}
+            loading={genPointsStart.isLoading || genJobStatus === "pending" || genJobStatus === "running"}
+            onClick={() => genPointsStart.mutate()}
           >
-            根据需求生成测试点
+            {genJobStatus === "pending" || genJobStatus === "running"
+              ? (genJobStatus === "pending" ? "排队中…" : "运行中…")
+              : "根据需求生成测试点"}
           </Button>
           <Button
             icon={<ThunderboltOutlined />}
-            loading={genCases.isLoading}
-            onClick={() => genCases.mutate()}
+            loading={genCasesStart.isLoading || genCasesJobStatus === "pending" || genCasesJobStatus === "running"}
+            onClick={() => genCasesStart.mutate()}
             disabled={!(requirement.testPoints?.length)}
           >
-            根据需求生成测试用例
+            {genCasesJobStatus === "pending" || genCasesJobStatus === "running"
+              ? (genCasesJobStatus === "pending" ? "排队中…" : "运行中…")
+              : "根据需求生成测试用例"}
           </Button>
           <Button icon={<PlusOutlined />} onClick={() => setModalOpen(true)}>
             新建测试点
@@ -138,6 +206,7 @@ export default function RequirementDetail() {
               const isImage = (a.mimeType || "").startsWith("image/");
               const fileUrl = attachmentsApi.getFileUrl(a.id);
               const downloadUrl = attachmentsApi.getFileUrl(a.id, true);
+              const hasExtracted = !!a.extractedText?.trim();
               return (
                 <div
                   key={a.id}
@@ -171,10 +240,68 @@ export default function RequirementDetail() {
                   <div style={{ padding: "4px 8px", fontSize: 12, color: "#666" }}>
                     {(a.size / 1024).toFixed(1)} KB
                   </div>
+                  {hasExtracted && (
+                    <div style={{ padding: "4px 8px", borderTop: "1px solid #eee" }}>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>解析内容</Typography.Text>
+                      <pre
+                        style={{
+                          margin: "4px 0 0",
+                          padding: 6,
+                          maxHeight: 120,
+                          overflow: "auto",
+                          fontSize: 12,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          background: "#fafafa",
+                          borderRadius: 4,
+                        }}
+                        title={a.extractedText!}
+                      >
+                        {a.extractedText!.length > 200
+                          ? `${a.extractedText!.slice(0, 200)}…`
+                          : a.extractedText}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
+          {requirement.attachments!.some((a) => a.extractedText?.trim()) && (
+            <Collapse
+              style={{ marginTop: 16 }}
+              items={[
+                {
+                  key: "parsed",
+                  label: "附件解析内容（全文）",
+                  children: (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                      {requirement.attachments!.filter((a) => a.extractedText?.trim()).map((a) => (
+                        <div key={a.id}>
+                          <Typography.Text strong>{a.filename}</Typography.Text>
+                          <pre
+                            style={{
+                              margin: "8px 0 0",
+                              padding: 12,
+                              background: "#fafafa",
+                              borderRadius: 6,
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              fontSize: 13,
+                              maxHeight: 400,
+                              overflow: "auto",
+                            }}
+                          >
+                            {a.extractedText!.trim()}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          )}
         </Card>
       )}
       <Card
@@ -192,10 +319,12 @@ export default function RequirementDetail() {
               type="primary"
               size="large"
               icon={<ThunderboltOutlined />}
-              loading={genPoints.isLoading}
-              onClick={() => genPoints.mutate()}
+              loading={genPointsStart.isLoading || genJobStatus === "pending" || genJobStatus === "running"}
+              onClick={() => genPointsStart.mutate()}
             >
-              一键生成测试点
+              {genJobStatus === "pending" || genJobStatus === "running"
+                ? (genJobStatus === "pending" ? "排队中…" : "运行中…")
+                : "一键生成测试点"}
             </Button>
           </div>
         ) : (

@@ -13,12 +13,27 @@ testCasesRouter.get("/", async (req, res) => {
       }),
       ...(priority && { priority }),
     },
-    orderBy: [{ testPoint: { pointId: "asc" } }, { caseId: "asc" }],
+    orderBy: { updatedAt: "desc" },
     include: {
       testPoint: { include: { requirement: { select: { id: true, title: true } } } },
     },
   });
   res.json(list);
+});
+
+testCasesRouter.post("/batch-delete", async (req, res) => {
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || ids.length === 0)
+    return res.status(400).json({ error: "ids must be a non-empty array" });
+  try {
+    const result = await prisma.testCase.deleteMany({
+      where: { id: { in: ids } },
+    });
+    res.json({ deleted: result.count });
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e));
+    res.status(500).json({ error: err.message });
+  }
 });
 
 testCasesRouter.get("/:id", async (req, res) => {

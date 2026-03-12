@@ -6,9 +6,17 @@ export const requirementsRouter = Router();
 requirementsRouter.get("/", async (_req, res) => {
   const list = await prisma.requirement.findMany({
     orderBy: { updatedAt: "desc" },
-    include: { _count: { select: { testPoints: true } } },
+    include: {
+      _count: { select: { testPoints: true } },
+      testPoints: { select: { _count: { select: { testCases: true } } } },
+    },
   });
-  res.json(list);
+  const listWithTestCaseCount = list.map((r) => {
+    const testCaseCount = r.testPoints.reduce((s, tp) => s + tp._count.testCases, 0);
+    const { testPoints, ...rest } = r;
+    return { ...rest, testCaseCount };
+  });
+  res.json(listWithTestCaseCount);
 });
 
 requirementsRouter.get("/:id", async (req, res) => {

@@ -26,4 +26,6 @@ export const testCasesApi = {
     }>
   ) => api.put<TestCase>(`/test-cases/${id}`, data).then((r) => r.data),
   delete: (id: string) => api.delete(`/test-cases/${id}`),
+  batchDelete: (ids: string[]) =>
+    api.post<{ deleted: number }>("/test-cases/batch-delete", { ids }).then((r) => r.data),
 };

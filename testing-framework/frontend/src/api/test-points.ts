@@ -20,4 +20,6 @@ export const testPointsApi = {
     data: { pointId?: string; description?: string; type?: string }
   ) => api.put<TestPoint>(`/test-points/${id}`, data).then((r) => r.data),
   delete: (id: string) => api.delete(`/test-points/${id}`),
+  batchDelete: (ids: string[]) =>
+    api.post<{ deleted: number }>("/test-points/batch-delete", { ids }).then((r) => r.data),
 };

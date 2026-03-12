@@ -11,6 +11,8 @@ export interface RequirementAttachment {
   filename: string;
   mimeType: string | null;
   size: number;
+  /** 附件解析后的文本（图片 OCR、PDF/Word 提取等） */
+  extractedText?: string | null;
 }
 
 export interface Requirement {
@@ -42,6 +44,7 @@ export interface TestCase {
   preconditions: string | null;
   steps: string | null;
   expected: string | null;
+  updatedAt?: string;
   testPoint?: TestPoint & { requirement?: Requirement };
 }
 
