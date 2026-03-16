@@ -21,35 +21,30 @@ export interface Requirement {
   content: string | null;
   updatedAt: string;
   attachments?: RequirementAttachment[];
-  testPoints?: TestPoint[];
-  _count?: { testPoints: number };
-}
-
-export interface TestPoint {
-  id: string;
-  requirementId: string;
-  pointId: string;
-  description: string | null;
-  type: string | null;
-  requirement?: Requirement;
   _count?: { testCases: number };
+  testCaseCount?: number;
 }
 
 export interface TestCase {
   id: string;
-  testPointId: string;
+  requirementId: string;
   caseId: string;
+  /** 一级功能点（大模块） */
+  featurePointL1: string | null;
+  /** 二级功能点（一级下的模块） */
+  featurePoint: string | null;
   title: string;
   priority: string | null;
   preconditions: string | null;
   steps: string | null;
   expected: string | null;
+  /** 验证点，多条可用换行分隔 */
+  validationPoints: string | null;
   updatedAt?: string;
-  testPoint?: TestPoint & { requirement?: Requirement };
+  requirement?: Requirement;
 }
 
 export interface Stats {
   requirements: number;
-  testPoints: number;
   testCases: number;
 }

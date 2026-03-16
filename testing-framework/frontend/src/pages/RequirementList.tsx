@@ -90,20 +90,25 @@ export default function RequirementList() {
 
   return (
     <div>
-      <Typography.Title level={4}>需求列表</Typography.Title>
-      <Space style={{ marginBottom: 16 }}>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            setEditingId(null);
-            form.resetFields();
-            setModalOpen(true);
-          }}
-        >
-          新建需求
-        </Button>
-      </Space>
+      <div className="page-header">
+        <Typography.Title level={4} className="page-title">需求列表</Typography.Title>
+        <p className="page-desc">管理需求并上传附件，用于生成测试用例</p>
+      </div>
+      <div className="page-toolbar">
+        <Space wrap size="middle">
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setEditingId(null);
+              form.resetFields();
+              setModalOpen(true);
+            }}
+          >
+            新建需求
+          </Button>
+        </Space>
+      </div>
       <Table
         loading={isLoading}
         rowKey="id"
@@ -111,7 +116,6 @@ export default function RequirementList() {
         columns={[
           { title: "标题", dataIndex: "title", width: 200, render: (t, r) => <Link to={`/requirements/${r.id}`}>{t}</Link> },
           { title: "内容", dataIndex: "content", ellipsis: true },
-          { title: "测试点数量", dataIndex: ["_count", "testPoints"], width: 100 },
           { title: "测试用例数量", dataIndex: "testCaseCount", width: 110 },
           {
             title: "操作",
@@ -177,7 +181,7 @@ export default function RequirementList() {
               accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.png,.jpg,.jpeg,.gif"
             >
               <p className="ant-upload-drag-icon">
-                <InboxOutlined style={{ color: "#1890ff" }} />
+                <InboxOutlined style={{ color: "#6366f1" }} />
               </p>
               <p className="ant-upload-text">点击或拖拽文件到此处上传</p>
               <p className="ant-upload-hint">支持 PDF、Word、Excel、图片等，单文件不超过 20MB</p>

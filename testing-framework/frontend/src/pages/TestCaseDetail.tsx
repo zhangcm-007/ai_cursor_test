@@ -16,17 +16,21 @@ export default function TestCaseDetail() {
 
   return (
     <div>
-      <Typography.Title level={4}>
-        <Link to="/test-cases">测试用例</Link> / {testCase.caseId}
-        {testCase.testPoint && (
-          <>
-            {" "}
-            / <Link to={`/test-points/${testCase.testPoint.id}`}>{testCase.testPoint.pointId}</Link>
-          </>
-        )}
-      </Typography.Title>
+      <div className="page-header">
+        <Typography.Title level={4} className="page-title" style={{ marginBottom: 0 }}>
+          <Link to="/test-cases">测试用例</Link> / {testCase.caseId}
+          {testCase.requirement && (
+            <>
+              {" "}
+              / <Link to={`/requirements/${testCase.requirement.id}`}>{testCase.requirement.title}</Link>
+            </>
+          )}
+        </Typography.Title>
+      </div>
       <Descriptions bordered column={1}>
         <Descriptions.Item label="用例编号">{testCase.caseId}</Descriptions.Item>
+        <Descriptions.Item label="一级功能点">{testCase.featurePointL1 || "-"}</Descriptions.Item>
+        <Descriptions.Item label="二级功能点">{testCase.featurePoint || "-"}</Descriptions.Item>
         <Descriptions.Item label="标题">{testCase.title}</Descriptions.Item>
         <Descriptions.Item label="优先级">{testCase.priority || "-"}</Descriptions.Item>
         <Descriptions.Item label="前置条件">{testCase.preconditions || "-"}</Descriptions.Item>
@@ -34,10 +38,17 @@ export default function TestCaseDetail() {
           <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{testCase.steps || "-"}</pre>
         </Descriptions.Item>
         <Descriptions.Item label="预期结果">{testCase.expected || "-"}</Descriptions.Item>
-        <Descriptions.Item label="所属测试点">
-          {testCase.testPoint ? (
-            <Link to={`/test-points/${testCase.testPoint.id}`}>
-              {testCase.testPoint.pointId}
+        <Descriptions.Item label="验证点">
+          {testCase.validationPoints ? (
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{testCase.validationPoints}</pre>
+          ) : (
+            "-"
+          )}
+        </Descriptions.Item>
+        <Descriptions.Item label="所属需求">
+          {testCase.requirement ? (
+            <Link to={`/requirements/${testCase.requirement.id}`}>
+              {testCase.requirement.title}
             </Link>
           ) : (
             "-"

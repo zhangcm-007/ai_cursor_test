@@ -1,0 +1,120 @@
+/* 深色科技风：全局排版与交互 */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: #0a0e17;
+  color: #f1f5f9;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 内容区统一留白与最大宽度 */
+.app-content-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* 页面标题区 */
+.page-header {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.page-header .page-title {
+  margin: 0 0 4px 0 !important;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: #f8fafc;
+}
+
+.page-header .page-desc {
+  margin: 0;
+  font-size: 13px;
+  color: #cbd5e1;
+  font-weight: 400;
+}
+
+/* 工具栏 */
+.page-toolbar {
+  margin-bottom: 20px;
+  padding: 12px 0;
+}
+
+/* 表格：深色表头与行 hover */
+.ant-table-wrapper .ant-table-thead > tr > th {
+  background: #1e293b !important;
+  font-weight: 600;
+  font-size: 12px;
+  color: #cbd5e1;
+  letter-spacing: 0.02em;
+  border-bottom-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr > td {
+  font-size: 13px;
+  color: #f1f5f9;
+  border-bottom-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.ant-table-wrapper .ant-table-tbody > tr:hover > td {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* 卡片 */
+.ant-card {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.ant-card-head {
+  border-bottom-color: rgba(255, 255, 255, 0.14);
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+/* 描述列表 */
+.ant-descriptions .ant-descriptions-item-label {
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.ant-descriptions .ant-descriptions-item-content {
+  color: #f1f5f9;
+}
+
+/* 链接 hover 靛紫 */
+a {
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: #a5b4fc;
+}
+
+/* 选中文本 */
+::selection {
+  background: rgba(99, 102, 241, 0.3);
+}
+
+/* 交互过渡 */
+.ant-btn,
+.ant-card,
+.ant-menu-item {
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ant-btn-primary:focus-visible {
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.3);
+}
+
+/* 首页统计卡 hover 靛紫光晕 */
+.stat-card:hover {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.3);
+}

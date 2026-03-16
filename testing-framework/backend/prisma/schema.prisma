@@ -13,7 +13,7 @@ model Requirement {
   content     String                  @default("")
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
-  testPoints  TestPoint[]
+  testCases   TestCase[]
   attachments RequirementAttachment[]
 }
 
@@ -29,28 +29,19 @@ model RequirementAttachment {
   createdAt     DateTime    @default(now())
 }
 
-model TestPoint {
-  id            String      @id @default(cuid())
-  requirementId String
-  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
-  pointId       String
-  description   String
-  type          String      @default("功能")
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  testCases     TestCase[]
-}
-
 model TestCase {
-  id            String    @id @default(cuid())
-  testPointId   String
-  testPoint     TestPoint @relation(fields: [testPointId], references: [id], onDelete: Cascade)
-  caseId        String
-  title         String
-  priority      String    @default("P1")
-  preconditions String    @default("")
-  steps         String    @default("")
-  expected      String    @default("")
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id               String     @id @default(cuid())
+  requirementId    String
+  requirement      Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  caseId           String
+  featurePointL1   String     @default("") // 一级功能点（大模块）
+  featurePoint    String     @default("") // 二级功能点（一级下的模块）
+  title            String
+  priority         String     @default("P1")
+  preconditions    String     @default("")
+  steps            String     @default("")
+  expected         String     @default("")
+  validationPoints String     @default("")
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
 }

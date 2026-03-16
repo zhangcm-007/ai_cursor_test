@@ -1,11 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "react-query";
-import { Button, Table, Space, Select, Modal, Form, Input, Typography, message, Checkbox } from "antd";
+import { Button, Table, Space, Select, Modal, Form, Input, Typography, message, Checkbox, Spin } from "antd";
 import { Link } from "react-router-dom";
 import { PlusOutlined, EditOutlined, DeleteOutlined, ThunderboltOutlined, ExportOutlined } from "@ant-design/icons";
 import { useState, useEffect, useRef } from "react";
 import { testCasesApi } from "../api/test-cases";
 import { requirementsApi } from "../api/requirements";
-import { testPointsApi } from "../api/test-points";
 import { generateApi } from "../api/generate";
 import { exportApi } from "../api/export";
 import type { TestCase } from "../api/client";
@@ -34,28 +33,24 @@ export default function TestCaseList() {
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const client = useQueryClient();
+  const GEN_JOB_KEY = "testCasesGenJobId";
 
   const { data: requirements = [] } = useQuery("requirements", requirementsApi.list);
-  const [genReqIdForPoints, setGenReqIdForPoints] = useState<string | null>(null);
-  const [genCasesJobId, setGenCasesJobId] = useState<string | null>(null);
+  const [genCasesJobId, setGenCasesJobId] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(GEN_JOB_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [genCasesJobStatus, setGenCasesJobStatus] = useState<"pending" | "running" | "completed" | "failed" | null>(null);
   const [genCasesJobResult, setGenCasesJobResult] = useState<{ created: number; attachmentErrors: string[] } | null>(null);
   const [genCasesJobError, setGenCasesJobError] = useState<string | null>(null);
   const genCasesPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { data: points = [] } = useQuery(
-    "test-points",
-    () => testPointsApi.list(undefined),
-    { enabled: true }
-  );
-  const { data: genReqPoints = [] } = useQuery(
-    ["test-points", genReqIdForPoints],
-    () => testPointsApi.list(genReqIdForPoints!),
-    { enabled: !!genReqIdForPoints }
-  );
   const { data: list = [], isLoading } = useQuery(
     ["test-cases", requirementFilter, priorityFilter],
     () => testCasesApi.list({ requirementId: requirementFilter, priority: priorityFilter }),
-    { enabled: true }
+    { refetchOnMount: "always", refetchOnWindowFocus: false }
   );
   const create = useMutation(testCasesApi.create, {
     onSuccess: () => {
@@ -102,15 +97,9 @@ export default function TestCaseList() {
     }
   );
   const genCasesStart = useMutation(
-    (params: {
-      requirementId: string;
-      testPointIds?: string[];
-      includeHistory: boolean;
-      historyCount: number;
-    }) =>
+    (params: { requirementId: string; includeHistory: boolean; historyCount: number }) =>
       generateApi.testCasesStart({
         requirementId: params.requirementId,
-        testPointIds: params.testPointIds?.length ? params.testPointIds : undefined,
         includeHistory: params.includeHistory,
         historyCount: params.historyCount,
       }),
@@ -120,11 +109,13 @@ export default function TestCaseList() {
         setGenCasesJobStatus("pending");
         setGenCasesJobResult(null);
         setGenCasesJobError(null);
+        try {
+          sessionStorage.setItem(GEN_JOB_KEY, data.jobId);
+        } catch {}
         setTimeout(() => {
           setGenModalOpen(false);
-          setGenReqIdForPoints(null);
           genForm.resetFields();
-        }, 3000);
+        }, 1000);
       },
       onError: (e: { response?: { data?: { error?: string } } }) =>
         message.error(e.response?.data?.error ?? "提交失败"),
@@ -134,7 +125,7 @@ export default function TestCaseList() {
   useEffect(() => {
     if (!genCasesJobId) return;
     const poll = () => {
-      generateApi.testCasesStatus(genCasesJobId!).then((next) => {
+      generateApi.testCasesStatus(genCasesJobId!).then(async (next) => {
         setGenCasesJobStatus(next.status);
         if (next.status === "completed") {
           if (genCasesPollRef.current) clearInterval(genCasesPollRef.current);
@@ -143,9 +134,12 @@ export default function TestCaseList() {
           setGenCasesJobStatus(null);
           setGenCasesJobResult(null);
           setGenCasesJobError(null);
-          client.invalidateQueries("test-cases");
-          client.invalidateQueries("test-points");
-          client.invalidateQueries("requirements");
+          try {
+            sessionStorage.removeItem(GEN_JOB_KEY);
+          } catch {}
+          await client.invalidateQueries("test-cases");
+          await client.refetchQueries("test-cases");
+          await client.invalidateQueries("requirements");
           message.success(`已生成 ${next.result?.created ?? 0} 条测试用例`);
           if (next.result?.attachmentErrors?.length)
             message.warning(`部分附件未解析: ${next.result.attachmentErrors.join(", ")}`);
@@ -155,6 +149,9 @@ export default function TestCaseList() {
           setGenCasesJobId(null);
           setGenCasesJobStatus(null);
           setGenCasesJobError(next.error ?? "生成失败");
+          try {
+            sessionStorage.removeItem(GEN_JOB_KEY);
+          } catch {}
           message.error(next.error ?? "生成失败");
         }
       }).catch(() => {});
@@ -166,18 +163,23 @@ export default function TestCaseList() {
     };
   }, [genCasesJobId, client]);
 
-  const doGenerateCases = (requirementId: string, testPointIds?: string[]) => {
-    genCasesStart.mutate({ requirementId, testPointIds, includeHistory, historyCount });
+  // jobId 存在但 status 未设时（如从 sessionStorage 恢复）设为 pending，以便立即显示占位
+  useEffect(() => {
+    if (genCasesJobId && genCasesJobStatus == null) {
+      setGenCasesJobStatus("pending");
+    }
+  }, [genCasesJobId, genCasesJobStatus]);
+
+  const doGenerateCases = (requirementId: string) => {
+    genCasesStart.mutate({ requirementId, includeHistory, historyCount });
   };
 
   const closeGenModal = () => {
     setGenModalOpen(false);
-    setGenReqIdForPoints(null);
-    setGenCasesJobId(null);
-    setGenCasesJobStatus(null);
     setGenCasesJobResult(null);
     setGenCasesJobError(null);
     genForm.resetFields();
+    // 不清 jobId/status，以便刷新或切页后回到本页仍能继续轮询；仅关闭弹框
     if (genCasesPollRef.current) {
       clearInterval(genCasesPollRef.current);
       genCasesPollRef.current = null;
@@ -215,22 +217,9 @@ export default function TestCaseList() {
   };
 
   const handleGenSubmit = () => {
-    genForm.validateFields().then(async (v) => {
+    genForm.validateFields().then((v) => {
       const requirementId = v.requirementId as string;
-      const testPointIds = (v.testPointIds as string[] | undefined)?.filter(Boolean);
-      const reqPoints = await testPointsApi.list(requirementId);
-      if (reqPoints.length === 0) {
-        Modal.confirm({
-          title: "该需求暂无测试点",
-          content:
-            "还没生成测试点，需要直接生成测试用例吗？系统将先自动创建一个整体测试点再生成用例。",
-          okText: "直接生成",
-          cancelText: "取消",
-          onOk: () => doGenerateCases(requirementId),
-        });
-      } else {
-        doGenerateCases(requirementId, testPointIds);
-      }
+      doGenerateCases(requirementId);
     });
   };
 
@@ -241,35 +230,50 @@ export default function TestCaseList() {
           id: editing.id,
           data: {
             caseId: v.caseId,
+            featurePointL1: v.featurePointL1,
+            featurePoint: v.featurePoint,
             title: v.title,
             priority: v.priority,
             preconditions: v.preconditions,
             steps: v.steps,
             expected: v.expected,
+            validationPoints: v.validationPoints,
           },
         });
       } else {
-        if (!v.testPointId) {
-          message.error("请选择测试点");
+        if (!v.requirementId) {
+          message.error("请选择需求");
           return;
         }
         create.mutate({
-          testPointId: v.testPointId,
+          requirementId: v.requirementId,
           caseId: v.caseId,
+          featurePointL1: v.featurePointL1,
+          featurePoint: v.featurePoint,
           title: v.title,
           priority: v.priority,
           preconditions: v.preconditions,
           steps: v.steps,
           expected: v.expected,
+          validationPoints: v.validationPoints,
         });
       }
     });
   };
 
+  const isGenerating = genCasesJobStatus === "pending" || genCasesJobStatus === "running";
+  const tableData: (TestCase & { _placeholder?: boolean })[] = isGenerating
+    ? [{ id: "__generating__", caseId: "", title: "", requirementId: "", featurePointL1: null, featurePoint: null, priority: null, preconditions: null, steps: null, expected: null, validationPoints: null, _placeholder: true } as TestCase & { _placeholder?: boolean }, ...list]
+    : list;
+
   return (
     <div>
-      <Typography.Title level={4}>测试用例列表</Typography.Title>
-      <Space style={{ marginBottom: 16 }}>
+      <div className="page-header">
+        <Typography.Title level={4} className="page-title">测试用例列表</Typography.Title>
+        <p className="page-desc">按需求或优先级筛选，生成用例或导出 XMind</p>
+      </div>
+      <div className="page-toolbar">
+        <Space wrap size="middle">
         <Select
           placeholder="按需求筛选"
           allowClear
@@ -294,8 +298,7 @@ export default function TestCaseList() {
           type="primary"
           icon={<ThunderboltOutlined />}
           onClick={() => {
-            genForm.setFieldsValue({ requirementId: requirementFilter, testPointIds: undefined });
-            setGenReqIdForPoints(requirementFilter ?? null);
+            genForm.setFieldsValue({ requirementId: requirementFilter });
             setGenModalOpen(true);
           }}
         >
@@ -332,29 +335,80 @@ export default function TestCaseList() {
           批量删除{selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : ""}
         </Button>
       </Space>
+      </div>
       <Table
-        loading={isLoading}
+        loading={isLoading && !isGenerating}
         rowKey="id"
-        dataSource={list}
-        rowSelection={{
-          selectedRowKeys,
-          onChange: (keys) => setSelectedRowKeys(keys),
-        }}
+        dataSource={tableData}
+        rowSelection={
+          isGenerating
+            ? undefined
+            : {
+                selectedRowKeys,
+                onChange: (keys) => setSelectedRowKeys(keys),
+                getCheckboxProps: (r) => ({ disabled: !!(r as { _placeholder?: boolean })._placeholder }),
+              }
+        }
         columns={[
-          { title: "用例ID", dataIndex: "caseId", width: 100 },
-          { title: "标题", dataIndex: "title", ellipsis: true },
-          { title: "优先级", dataIndex: "priority", width: 80 },
-          { title: "测试点", dataIndex: ["testPoint", "pointId"], width: 100 },
+          {
+            title: "用例ID",
+            dataIndex: "caseId",
+            width: 100,
+            render: (t: string, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder
+                ? { children: <span style={{ color: "var(--ant-color-text-secondary)" }}><Spin size="small" style={{ marginRight: 8 }} />正在生成测试用例，请稍候…</span>, props: { colSpan: 8 } }
+                : t,
+          },
+          {
+            title: "一级功能点",
+            dataIndex: "featurePointL1",
+            width: 100,
+            ellipsis: true,
+            render: (_: unknown, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder ? { props: { colSpan: 0 } } : (r.featurePointL1 ?? "-"),
+          },
+          {
+            title: "二级功能点",
+            dataIndex: "featurePoint",
+            width: 120,
+            ellipsis: true,
+            render: (_: unknown, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder ? { props: { colSpan: 0 } } : (r.featurePoint ?? "-"),
+          },
+          {
+            title: "标题",
+            dataIndex: "title",
+            ellipsis: true,
+            render: (_: unknown, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder ? { props: { colSpan: 0 } } : r.title,
+          },
+          {
+            title: "优先级",
+            dataIndex: "priority",
+            width: 80,
+            render: (_: unknown, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder ? { props: { colSpan: 0 } } : (r.priority ?? "-"),
+          },
+          {
+            title: "所属需求",
+            dataIndex: ["requirement", "title"],
+            width: 180,
+            ellipsis: true,
+            render: (_: unknown, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder ? { props: { colSpan: 0 } } : (r.requirement?.title ?? "-"),
+          },
           {
             title: "更新时间",
             dataIndex: "updatedAt",
             width: 160,
-            render: (t: string) => (t ? new Date(t).toLocaleString("zh-CN") : "-"),
+            render: (t: string, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder ? { props: { colSpan: 0 } } : (t ? new Date(t).toLocaleString("zh-CN") : "-"),
           },
           {
             title: "操作",
             width: 140,
-            render: (_, r) => (
+            render: (_: unknown, r: TestCase & { _placeholder?: boolean }) =>
+              r._placeholder ? { props: { colSpan: 0 } } : (
               <Space>
                 <Link to={`/test-cases/${r.id}`}>详情</Link>
                 <Button
@@ -364,13 +418,16 @@ export default function TestCaseList() {
                   onClick={() => {
                     setEditing(r);
                     form.setFieldsValue({
-                      testPointId: r.testPointId,
+                      requirementId: r.requirementId,
                       caseId: r.caseId,
+                      featurePointL1: r.featurePointL1 ?? "",
+                      featurePoint: r.featurePoint ?? "",
                       title: r.title,
                       priority: r.priority,
                       preconditions: r.preconditions,
                       steps: r.steps,
                       expected: r.expected,
+                      validationPoints: r.validationPoints ?? "",
                     });
                     setModalOpen(true);
                   }}
@@ -404,18 +461,21 @@ export default function TestCaseList() {
       >
         <Form form={form} layout="vertical">
           {!editing && (
-            <Form.Item name="testPointId" label="所属测试点" rules={[{ required: true }]}>
+            <Form.Item name="requirementId" label="所属需求" rules={[{ required: true }]}>
               <Select
-                placeholder="选择测试点"
-                options={points.map((p) => ({
-                  label: `${p.pointId} - ${(p as { requirement?: { title: string } }).requirement?.title ?? ""}`,
-                  value: p.id,
-                }))}
+                placeholder="选择需求"
+                options={requirements.map((r) => ({ label: r.title, value: r.id }))}
               />
             </Form.Item>
           )}
           <Form.Item name="caseId" label="用例编号" rules={[{ required: true }]}>
             <Input placeholder="如 TC-001" />
+          </Form.Item>
+          <Form.Item name="featurePointL1" label="一级功能点">
+            <Input placeholder="如 个人红包、群红包、账户余额（分类/大类）" />
+          </Form.Item>
+          <Form.Item name="featurePoint" label="二级功能点">
+            <Input placeholder="如 红包领取、发送群红包（一级下的模块）" />
           </Form.Item>
           <Form.Item name="title" label="标题" rules={[{ required: true }]}>
             <Input placeholder="用例标题" />
@@ -438,6 +498,9 @@ export default function TestCaseList() {
           <Form.Item name="expected" label="预期结果">
             <Input.TextArea rows={2} />
           </Form.Item>
+          <Form.Item name="validationPoints" label="验证点">
+            <Input.TextArea rows={3} placeholder="多条可换行填写，用于确认预期结果的检查项" />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal
@@ -450,26 +513,26 @@ export default function TestCaseList() {
         confirmLoading={genCasesStart.isLoading}
         okButtonProps={{ disabled: genCasesJobStatus === "pending" || genCasesJobStatus === "running" }}
       >
-        <p style={{ color: "#666", marginBottom: 16 }}>
-          将根据所选需求下的测试点（及需求内容、历史相关需求）调用模型生成测试用例。若该需求尚无测试点，可选择直接生成，系统会先自动创建整体测试点再生成用例。
+        <p style={{ color: "#cbd5e1", marginBottom: 16 }}>
+          将根据所选需求内容（及可选的历史相关需求）调用模型直接生成测试用例。
         </p>
         {genCasesJobStatus === "pending" && (
-          <div style={{ marginBottom: 16, padding: 12, background: "#f5f5f5", borderRadius: 8 }}>
+          <div style={{ marginBottom: 16, padding: 12, background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)" }}>
             排队中…
           </div>
         )}
         {genCasesJobStatus === "running" && (
-          <div style={{ marginBottom: 16, padding: 12, background: "#e6f7ff", border: "1px solid #91d5ff", borderRadius: 8 }}>
+          <div style={{ marginBottom: 16, padding: 12, background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.4)", borderRadius: 8 }}>
             后台生成中…
           </div>
         )}
         {genCasesJobStatus === "completed" && genCasesJobResult && (
-          <div style={{ marginBottom: 16, padding: 12, background: "#f6ffed", border: "1px solid #b7eb8f", borderRadius: 8 }}>
+          <div style={{ marginBottom: 16, padding: 12, background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.4)", borderRadius: 8 }}>
             已生成 {genCasesJobResult.created} 条测试用例。
           </div>
         )}
         {genCasesJobStatus === "failed" && genCasesJobError && (
-          <div style={{ marginBottom: 16, padding: 12, background: "#fff2f0", border: "1px solid #ffccc7", borderRadius: 8 }}>
+          <div style={{ marginBottom: 16, padding: 12, background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 8 }}>
             {genCasesJobError}
           </div>
         )}
@@ -482,29 +545,8 @@ export default function TestCaseList() {
             <Select
               placeholder="选择要生成测试用例的需求"
               options={requirements.map((r) => ({ label: r.title, value: r.id }))}
-              onChange={(id) => {
-                setGenReqIdForPoints(id ?? null);
-                genForm.setFieldValue("testPointIds", undefined);
-              }}
             />
           </Form.Item>
-          {genReqIdForPoints && (
-            <Form.Item
-              name="testPointIds"
-              label="选择测试点"
-              extra="不选则对该需求下全部测试点生成用例"
-            >
-              <Select
-                mode="multiple"
-                allowClear
-                placeholder="不选即全部"
-                options={genReqPoints.map((p) => ({
-                  label: `${p.pointId} - ${(p.description ?? "").slice(0, 40)}${(p.description?.length ?? 0) > 40 ? "…" : ""}`,
-                  value: p.id,
-                }))}
-              />
-            </Form.Item>
-          )}
           <Form.Item>
             <Checkbox checked={includeHistory} onChange={(e) => setIncludeHistory(e.target.checked)}>
               参考历史需求（按关键词检索）
@@ -533,7 +575,7 @@ export default function TestCaseList() {
         cancelText="取消"
         confirmLoading={exportLoading}
       >
-        <p style={{ color: "#666", marginBottom: 16 }}>
+        <p style={{ color: "#cbd5e1", marginBottom: 16 }}>
           选择需求后，将导出该需求下的测试用例为 XMind 文件（.mm）。
         </p>
         <Form form={exportForm} layout="vertical">

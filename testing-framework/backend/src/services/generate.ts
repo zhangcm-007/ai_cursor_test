@@ -10,104 +10,38 @@ function parseJsonBlock(text: string): unknown {
   return JSON.parse(text.trim()) as unknown;
 }
 
-export async function generateTestPoints(options: {
+export async function generateTestCases(options: {
   requirementId: string;
   includeHistory?: boolean;
   historyCount?: number;
 }): Promise<{ created: number; attachmentErrors: string[] }> {
   if (!isConfigured()) throw new Error("LLM not configured");
   const { requirementId } = options;
-  const { fullContent, attachmentErrors } = await getFullContent(requirementId);
-  console.log(`[生成测试点] requirementId=${requirementId}, fullContent 长度=${fullContent.length}, attachmentErrors=[${attachmentErrors.join(", ")}]`);
-  console.log(`[生成测试点] fullContent 预览:\n${fullContent.slice(0, 500)}${fullContent.length > 500 ? "\n...(省略)" : ""}`);
-
-  const systemPrompt = `你是一名测试工程师。根据需求描述生成测试点。测试点需覆盖功能、边界、异常等类型。只输出一个 JSON 数组，不要其他说明。格式：[{"pointId":"TP-01","description":"...","type":"功能|边界|异常"}]。pointId 从 TP-01 递增。`;
-  const userPrompt = `## 当前需求\n${fullContent}\n\n请生成测试点 JSON 数组：`;
-
-  console.log(`[生成测试点] 开始调用模型...`);
-  const content = await chat([
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userPrompt },
-  ]);
-
-  const arr = parseJsonBlock(content) as { pointId?: string; description?: string; type?: string }[];
-  if (!Array.isArray(arr)) throw new Error("Invalid LLM output: not an array");
-  console.log(`[生成测试点] 模型返回 ${arr.length} 条，开始写入数据库`);
-
-  const existing = await prisma.testPoint.findMany({
-    select: { pointId: true },
-  });
-  const used = new Set(existing.map((p) => p.pointId));
-  const maxNum = existing.length
-    ? Math.max(
-        0,
-        ...existing
-          .map((p) => parseInt(p.pointId.replace(/^TP-?/i, ""), 10))
-          .filter((n) => !Number.isNaN(n))
-      )
-    : 0;
-  let nextNum = maxNum + 1;
-  for (const item of arr) {
-    const pointId =
-      item.pointId && !used.has(item.pointId) ? item.pointId : `TP-${String(nextNum).padStart(2, "0")}`;
-    used.add(pointId);
-    nextNum++;
-    await prisma.testPoint.create({
-      data: {
-        requirementId,
-        pointId,
-        description: String(item.description ?? "").slice(0, 2000),
-        type: String(item.type ?? "功能").slice(0, 50),
-      },
-    });
-  }
-  console.log(`[生成测试点] 完成，创建 ${arr.length} 个测试点`);
-  return { created: arr.length, attachmentErrors };
-}
-
-export async function generateTestCases(options: {
-  requirementId: string;
-  testPointIds?: string[];
-  includeHistory?: boolean;
-  historyCount?: number;
-}): Promise<{ created: number; attachmentErrors: string[] }> {
-  if (!isConfigured()) throw new Error("LLM not configured");
-  const { requirementId, testPointIds } = options;
 
   const { fullContent, attachmentErrors } = await getFullContent(requirementId);
-  console.log(`[生成测试用例] requirementId=${requirementId}, testPointIds=${testPointIds?.length ?? "全部"}, fullContent 长度=${fullContent.length}, attachmentErrors=[${attachmentErrors.join(", ")}]`);
+  console.log(`[生成测试用例] requirementId=${requirementId}, fullContent 长度=${fullContent.length}, attachmentErrors=[${attachmentErrors.join(", ")}]`);
   console.log(`[生成测试用例] fullContent 预览:\n${fullContent.slice(0, 500)}${fullContent.length > 500 ? "\n...(省略)" : ""}`);
 
-  let points = await prisma.testPoint.findMany({
-    where: testPointIds?.length ? { id: { in: testPointIds }, requirementId } : { requirementId },
-    orderBy: { pointId: "asc" },
-  });
-  if (points.length === 0) {
-    const requirement = await prisma.requirement.findUnique({
-      where: { id: requirementId },
-      select: { title: true },
-    });
-    const title = requirement?.title ?? "需求";
-    await prisma.testPoint.create({
-      data: {
-        requirementId,
-        pointId: "REQ-整体",
-        description: `基于「${title}」直接生成的测试点（未先生成测试点）`,
-        type: "功能",
-      },
-    });
-    points = await prisma.testPoint.findMany({
-      where: { requirementId },
-      orderBy: { pointId: "asc" },
-    });
-  }
+  const systemPrompt = `你是一名测试工程师。请根据以下需求描述生成测试用例，严格参照给定的结构。需求描述将在稍后提供。
 
-  const pointIdToId = new Map(points.map((p) => [p.pointId.trim(), p.id]));
-  const pointsDesc = points.map((p) => `${p.pointId}: ${p.description}`).join("\n");
-  const pointIdList = points.map((p) => p.pointId).join("、");
+覆盖要求：
+- 需全面覆盖需求中的主流程、关键分支、边界条件、异常/错误场景（异常包括：输入无效数据、网络超时、服务器错误、权限不足等）。
+- 根据需求复杂度生成足够数量的用例，避免重复。通常生成不少于5条、不超过30条测试用例，具体数量由需求复杂度和场景数量决定。
 
-  const systemPrompt = `你是一名测试工程师。根据需求和测试点生成测试用例。只输出一个 JSON 数组，不要其他说明。格式：[{"pointId":"<测试点ID>","title":"...","priority":"P0|P1|P2","preconditions":"...","steps":"...","expected":"..."}]。其中 pointId 必须与下面测试点列表中的测试点 ID 完全一致（照抄列表中的 pointId，不要改成 TP-01 等）。caseId 由系统按需求内全局递增分配，无需在输出中填写。`;
-  const userPrompt = `## 当前需求\n${fullContent}\n\n## 测试点列表（输出的 pointId 必须从下列中照抄，不可改写）\n${pointsDesc}\n\n可选测试点 ID：${pointIdList}\n\n请为上述测试点生成测试用例 JSON 数组：`;
+每条测试用例包含以下字段（不要 pointId）：
+1. featurePointL1：一级功能点（需求下的分类/大类），如"个人红包"、"群红包"、"账户余额"、"支付方式"。同一分类的用例填相同一级功能点。
+2. featurePoint：二级功能点（一级下的具体模块），如"红包领取"、"发送群红包"。同一子模块的用例填相同二级功能点。
+3. title：测试用例名称，简洁描述场景，可中英文（如"提现页面展示已激活卡片 / Withdrawal page displays activated card"）。建议优先使用中文，保留必要英文术语。
+4. priority：P0（核心流程/阻塞性）、P1（重要功能/非阻塞）、P2（边缘/异常/易用性）。请按此标准赋值。
+5. preconditions：前置条件，执行前系统应满足的状态（一条或短句，可多句）。
+6. steps：测试步骤，按编号列出原子操作（如"1. 进入提现流程 2. 查看选卡页面"）。
+7. expected：预期结果，完成步骤后系统应达到的状态（简短明确）。
+8. validationPoints：验证点，用于确认预期结果的详细检查项；多条时用数组，如["卡片可点击，无 disabled 状态", "无【未激活】标签"]，或单条字符串。每个验证点应具体、可观察。
+
+只输出一个 JSON 数组，不要其他说明。格式示例：
+[{"featurePointL1":"群红包","featurePoint":"红包领取","title":"...","priority":"P1","preconditions":"...","steps":"...","expected":"...","validationPoints":["验证点1","验证点2"]}]
+caseId 由系统分配，无需在输出中填写。`;
+  const userPrompt = `## 当前需求\n${fullContent}\n\n请根据上述需求全面生成测试用例 JSON 数组：覆盖正常流程、分支、边界与异常，数量要足够（按需求复杂度生成，通常 5～30 条）。每条务必包含 featurePointL1、featurePoint、title、priority、preconditions、steps、expected、validationPoints。`;
 
   console.log(`[生成测试用例] 开始调用模型...`);
   const content = await chat([
@@ -116,19 +50,21 @@ export async function generateTestCases(options: {
   ]);
 
   const arr = parseJsonBlock(content) as {
-    pointId?: string;
-    caseId?: string;
+    featurePointL1?: string;
+    featurePoint?: string;
     title?: string;
     priority?: string;
     preconditions?: string;
     steps?: string;
     expected?: string;
+    validationPoints?: string | string[];
   }[];
   if (!Array.isArray(arr)) throw new Error("Invalid LLM output: not an array");
   console.log(`[生成测试用例] 模型返回 ${arr.length} 条，开始写入数据库`);
 
   const existingCases = await prisma.testCase.findMany({
-    where: { testPointId: { in: points.map((p) => p.id) } },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    where: { requirementId } as any,
     select: { caseId: true },
   });
   const parseCaseNum = (caseId: string): number => {
@@ -143,22 +79,38 @@ export async function generateTestCases(options: {
   let nextCaseNum = maxExisting + 1;
   let created = 0;
   for (const item of arr) {
-    const pt = (item.pointId ?? "").trim();
-    const testPointId = pointIdToId.get(pt);
-    if (!testPointId) continue;
     const caseId = `TC-${String(nextCaseNum).padStart(3, "0")}`;
     nextCaseNum++;
-    await prisma.testCase.create({
-      data: {
-        testPointId,
-        caseId,
-        title: String(item.title ?? "").slice(0, 500),
-        priority: ["P0", "P1", "P2"].includes(String(item.priority)) ? item.priority : "P1",
-        preconditions: String(item.preconditions ?? "").slice(0, 2000),
-        steps: String(item.steps ?? "").slice(0, 2000),
-        expected: String(item.expected ?? "").slice(0, 2000),
-      },
-    });
+    const rawVp = item.validationPoints;
+    const validationPointsStr = Array.isArray(rawVp)
+      ? rawVp.map((s) => String(s).trim()).filter(Boolean).join("\n")
+      : String(rawVp ?? "").trim();
+    const featurePointL1 = String(item.featurePointL1 ?? "").trim().slice(0, 200);
+    const featurePoint = String(item.featurePoint ?? "").trim().slice(0, 200);
+    const payload = {
+      requirementId,
+      caseId,
+      featurePointL1,
+      featurePoint,
+      title: String(item.title ?? "").slice(0, 500),
+      priority: ["P0", "P1", "P2"].includes(String(item.priority)) ? item.priority : "P1",
+      preconditions: String(item.preconditions ?? "").slice(0, 2000),
+      steps: String(item.steps ?? "").slice(0, 2000),
+      expected: String(item.expected ?? "").slice(0, 2000),
+      validationPoints: validationPointsStr.slice(0, 2000),
+    };
+    try {
+      await prisma.testCase.create({ data: payload as unknown as Parameters<typeof prisma.testCase.create>[0]["data"] });
+    } catch (createErr: unknown) {
+      const msg = createErr instanceof Error ? createErr.message : String(createErr);
+      if (msg.includes("validationPoints") || msg.includes("featurePoint") || msg.includes("featurePointL1") || msg.includes("Unknown arg")) {
+        const { validationPoints: _vp, featurePoint: _fp, featurePointL1: _fp1, ...rest } = payload;
+        await prisma.testCase.create({ data: { ...rest } as unknown as Parameters<typeof prisma.testCase.create>[0]["data"] });
+        console.warn("[生成测试用例] 当前 Prisma 未包含 validationPoints 字段，已省略该字段写入。请执行 npx prisma generate 后重新生成。");
+      } else {
+        throw createErr;
+      }
+    }
     created++;
   }
   console.log(`[生成测试用例] 完成，创建 ${created} 条测试用例`);

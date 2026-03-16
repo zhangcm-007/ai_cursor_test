@@ -7,15 +7,13 @@ requirementsRouter.get("/", async (_req, res) => {
   const list = await prisma.requirement.findMany({
     orderBy: { updatedAt: "desc" },
     include: {
-      _count: { select: { testPoints: true } },
-      testPoints: { select: { _count: { select: { testCases: true } } } },
+      _count: { select: { testCases: true } },
     },
   });
-  const listWithTestCaseCount = list.map((r) => {
-    const testCaseCount = r.testPoints.reduce((s, tp) => s + tp._count.testCases, 0);
-    const { testPoints, ...rest } = r;
-    return { ...rest, testCaseCount };
-  });
+  const listWithTestCaseCount = list.map((r) => ({
+    ...r,
+    testCaseCount: r._count.testCases,
+  }));
   res.json(listWithTestCaseCount);
 });
 
@@ -23,7 +21,6 @@ requirementsRouter.get("/:id", async (req, res) => {
   const r = await prisma.requirement.findUnique({
     where: { id: req.params.id },
     include: {
-      testPoints: true,
       attachments: true,
     },
   });

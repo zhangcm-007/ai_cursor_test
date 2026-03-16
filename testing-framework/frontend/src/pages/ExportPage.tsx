@@ -36,9 +36,12 @@ export default function ExportPage() {
 
   return (
     <div>
-      <Typography.Title level={4}>导出 XMind 大纲</Typography.Title>
+      <div className="page-header">
+        <Typography.Title level={4} className="page-title">导出 XMind 大纲</Typography.Title>
+        <p className="page-desc">选择需求后导出测试用例的 XMind 大纲文件</p>
+      </div>
       <Card>
-        <p style={{ marginBottom: 16 }}>
+        <p style={{ marginBottom: 16, color: "#cbd5e1", fontSize: 13 }}>
           选择要导出的需求，将生成该需求下所有测试用例的 XMind 大纲文件（.txt），可在 XMind 中通过「文件 → 导入 → 大纲」使用。
         </p>
         {isLoading ? (
@@ -57,7 +60,7 @@ export default function ExportPage() {
               ))}
             </Checkbox.Group>
             {requirements.length === 0 && (
-              <div style={{ color: "#999" }}>暂无需求</div>
+              <div style={{ color: "#cbd5e1" }}>暂无需求</div>
             )}
             <div style={{ marginTop: 16 }}>
               <Button

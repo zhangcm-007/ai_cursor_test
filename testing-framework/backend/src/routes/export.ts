@@ -4,91 +4,75 @@ import { outlineTextToFreemind } from "../services/outlineToFreemind.js";
 
 export const exportRouter = Router();
 
-exportRouter.post("/xmind-outline", async (req, res) => {
-  const { requirementIds, format } = req.body as { requirementIds?: string[]; format?: "txt" | "mm" };
-  if (!requirementIds?.length)
-    return res.status(400).json({ error: "requirementIds is required" });
-  const points = await prisma.testPoint.findMany({
-    where: { requirementId: { in: requirementIds } },
-    include: { requirement: { select: { title: true } } },
-    orderBy: [{ requirement: { title: "asc" } }, { pointId: "asc" }],
-  });
-  const lines: string[] = [];
-  let lastReq = "";
-  for (const p of points) {
-    const reqTitle = p.requirement.title;
-    if (reqTitle !== lastReq) {
-      lines.push(reqTitle);
-      lastReq = reqTitle;
-    }
-    const desc = (p.description || "").replace(/\n/g, " ").slice(0, 200);
-    lines.push(`\t${p.pointId}${desc ? " " + desc : ""}`);
-  }
-  const outlineText = lines.join("\n");
-  if (format === "mm") {
-    const mm = outlineTextToFreemind(outlineText);
-    res.setHeader("Content-Type", "application/xml; charset=utf-8");
-    res.setHeader("Content-Disposition", "attachment; filename=xmind_testpoints.mm");
-    res.send(Buffer.from(mm, "utf-8"));
-    return;
-  }
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Content-Disposition", "attachment; filename=xmind_testpoints.txt");
-  res.send(outlineText);
-});
-
 exportRouter.post("/xmind", async (req, res) => {
   const { requirementIds, testCaseIds, format } = req.body as {
     requirementIds?: string[];
     testCaseIds?: string[];
     format?: "txt" | "mm";
   };
-  let cases: { caseId: string; title: string; priority: string; preconditions: string; steps: string; expected: string; testPoint: { pointId: string; requirement: { title: string } } }[];
+  let cases: { caseId: string; featurePointL1: string; featurePoint: string; title: string; priority: string; preconditions: string; steps: string; expected: string; validationPoints: string; requirement: { title: string } }[];
   if (testCaseIds?.length) {
     const raw = await prisma.testCase.findMany({
       where: { id: { in: testCaseIds } },
-      include: { testPoint: { include: { requirement: { select: { title: true } } } } },
+      include: { requirement: { select: { title: true } } },
     });
-    cases = raw.sort(
-      (a, b) =>
-        a.testPoint.requirement.title.localeCompare(b.testPoint.requirement.title) ||
-        a.testPoint.pointId.localeCompare(b.testPoint.pointId) ||
-        a.caseId.localeCompare(b.caseId)
-    ) as never;
+    cases = raw;
   } else if (requirementIds?.length) {
     const raw = await prisma.testCase.findMany({
-      where: { testPoint: { requirementId: { in: requirementIds } } },
-      include: { testPoint: { include: { requirement: { select: { title: true } } } } },
+      where: { requirementId: { in: requirementIds } },
+      include: { requirement: { select: { title: true } } },
     });
-    cases = raw.sort(
-      (a, b) =>
-        a.testPoint.requirement.title.localeCompare(b.testPoint.requirement.title) ||
-        a.testPoint.pointId.localeCompare(b.testPoint.pointId) ||
-        a.caseId.localeCompare(b.caseId)
-    ) as never;
+    cases = raw;
   } else {
     return res.status(400).json({ error: "Provide requirementIds or testCaseIds" });
   }
+  /** 二级节点：优先用二级功能点，否则从标题取「xxx-」前部分 */
+  function getL2(c: { featurePoint?: string | null; title: string }): string {
+    if (c.featurePoint != null && String(c.featurePoint).trim()) return String(c.featurePoint).trim();
+    const match = c.title.match(/^([^-－]+)[-－]/);
+    return match ? match[1].trim() : "";
+  }
+  cases.sort(
+    (a, b) =>
+      a.requirement.title.localeCompare(b.requirement.title) ||
+      (a.featurePointL1 ?? "").trim().localeCompare((b.featurePointL1 ?? "").trim()) ||
+      getL2(a).localeCompare(getL2(b)) ||
+      a.caseId.localeCompare(b.caseId)
+  );
   const lines: string[] = [];
   let lastReq = "";
-  let lastPoint = "";
+  let lastL1 = "";
+  let lastL2 = "";
   for (const c of cases) {
-    const reqTitle = c.testPoint.requirement.title;
-    const pointId = c.testPoint.pointId;
+    const reqTitle = c.requirement.title;
+    const l1 = (c.featurePointL1 ?? "").trim();
+    const l2 = getL2(c);
     if (reqTitle !== lastReq) {
       lines.push(reqTitle);
       lastReq = reqTitle;
-      lastPoint = "";
+      lastL1 = "";
+      lastL2 = "";
     }
-    if (pointId !== lastPoint) {
-      lines.push(`\t${pointId}`);
-      lastPoint = pointId;
+    if (l1 && l1 !== lastL1) {
+      lines.push(`\t${l1}`);
+      lastL1 = l1;
+      lastL2 = "";
     }
-    lines.push(`\t\t${c.caseId} ${c.title}`);
-    if (c.priority) lines.push(`\t\t\t优先级：${c.priority}`);
-    if (c.preconditions) lines.push(`\t\t\t前置条件：${c.preconditions.replace(/\n/g, " ")}`);
-    if (c.steps) lines.push(`\t\t\t测试步骤：${c.steps.replace(/\n/g, " ")}`);
-    if (c.expected) lines.push(`\t\t\t预期结果：${c.expected.replace(/\n/g, " ")}`);
+    if (l2 && l2 !== lastL2) {
+      lines.push(`\t\t${l2}`);
+      lastL2 = l2;
+    }
+    const caseIndent = l1 || l2 ? (l1 && l2 ? "\t\t\t" : l1 ? "\t\t" : "\t") : "\t";
+    const detailIndent = caseIndent + "\t";
+    lines.push(`${caseIndent}${c.caseId} ${c.title}`);
+    if (c.priority) lines.push(`${detailIndent}优先级：${c.priority}`);
+    if (c.preconditions) lines.push(`${detailIndent}前置条件：${c.preconditions.replace(/\n/g, " ")}`);
+    if (c.steps) lines.push(`${detailIndent}测试步骤：${c.steps.replace(/\n/g, " ")}`);
+    if (c.expected) lines.push(`${detailIndent}预期结果：${c.expected.replace(/\n/g, " ")}`);
+    if (c.validationPoints) {
+      const vps = c.validationPoints.split(/\n/).filter(Boolean);
+      vps.forEach((vp: string) => lines.push(`${detailIndent}验证点：${vp.replace(/\n/g, " ")}`));
+    }
   }
   const outlineText = lines.join("\n");
   if (format === "mm") {
