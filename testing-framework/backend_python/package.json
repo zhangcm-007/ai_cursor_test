@@ -1,0 +1,11 @@
+{
+  "name": "testing-framework-backend-python",
+  "private": true,
+  "scripts": {
+    "db:push": "prisma db push --skip-generate",
+    "db:studio": "prisma studio"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "testing-framework",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm run dev:api --prefix backend\" \"npm run dev --prefix frontend\"",
+    "dev:web3000": "concurrently -k -n api,web -c blue,magenta \"npm run dev:api --prefix backend\" \"npm run dev:3000 --prefix frontend\"",
+    "dev:capture": "node scripts/capture-console.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "playwright": "^1.49.1"
+  }
+}

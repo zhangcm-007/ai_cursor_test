@@ -1,6 +1,7 @@
 import { prisma } from "../prisma.js";
 import { getFullContent } from "./requirementContent.js";
 import { chat, isConfigured } from "./llmClient.js";
+import { getCodeFromGit, isGitRepoConfigured } from "./gitService.js";
 
 function parseJsonBlock(text: string): unknown {
   const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -10,19 +11,102 @@ function parseJsonBlock(text: string): unknown {
   return JSON.parse(text.trim()) as unknown;
 }
 
+const DEV_CODE_MAX_LENGTH = 15000;
+const DEV_CODE_FILE_MAX_LENGTH = 8000;
+const DEV_CODE_FILE_MAX_COUNT = 6;
+
+/** 按扩展名给出 Markdown 代码块语言标识，便于模型按文档理解代码 */
+function langFromFilename(name: string): string {
+  const ext = name.replace(/^.*\./, "").toLowerCase();
+  const map: Record<string, string> = {
+    ts: "typescript",
+    tsx: "typescript",
+    js: "javascript",
+    jsx: "javascript",
+    py: "python",
+    go: "go",
+    java: "java",
+    rs: "rust",
+    vue: "vue",
+    css: "css",
+    html: "html",
+    json: "json",
+    md: "markdown",
+  };
+  return map[ext] ?? "text";
+}
+
 export async function generateTestCases(options: {
   requirementId: string;
   includeHistory?: boolean;
   historyCount?: number;
+  devCode?: string;
+  /** 以「文档/技能」形式带给模型：带文件名与语言，多文件分段，避免整段粘贴 */
+  devCodeFiles?: { name: string; content: string }[];
+  /** 根据提交记录从配置的 Git 仓库自动拉取代码（需配置 DEV_CODE_REPO_PATH） */
+  devCodeRef?: { commit: string; paths?: string[] };
 }): Promise<{ created: number; attachmentErrors: string[] }> {
   if (!isConfigured()) throw new Error("LLM not configured");
-  const { requirementId } = options;
+  const { requirementId, devCode: rawDevCode, devCodeFiles: rawFiles, devCodeRef } = options;
 
   const { fullContent, attachmentErrors } = await getFullContent(requirementId);
   console.log(`[生成测试用例] requirementId=${requirementId}, fullContent 长度=${fullContent.length}, attachmentErrors=[${attachmentErrors.join(", ")}]`);
   console.log(`[生成测试用例] fullContent 预览:\n${fullContent.slice(0, 500)}${fullContent.length > 500 ? "\n...(省略)" : ""}`);
 
-  const systemPrompt = `你是一名测试工程师。请根据以下需求描述生成测试用例，严格参照给定的结构。需求描述将在稍后提供。
+  const files: { name: string; content: string }[] = [];
+
+  if (devCodeRef?.commit?.trim()) {
+    const repoPath = (process.env.DEV_CODE_REPO_PATH ?? "").trim();
+    const gitConfigured = isGitRepoConfigured();
+    console.log(`[生成测试用例] devCodeRef 已填写: commit="${devCodeRef.commit}" paths=${JSON.stringify(devCodeRef.paths ?? [])} DEV_CODE_REPO_PATH=${repoPath || "(未配置)"} isGitRepoConfigured=${gitConfigured}`);
+    if (!gitConfigured) {
+      console.warn("[生成测试用例] 未配置或无效的 DEV_CODE_REPO_PATH，将跳过按提交记录拉取代码。请在 .env 中设置并指向有效的 Git 仓库根目录。");
+    } else {
+      try {
+        console.log(`[生成测试用例] 开始从 Git 拉取代码: repoPath=${repoPath} commit=${devCodeRef.commit}`);
+        const fromGit = getCodeFromGit(repoPath, devCodeRef.commit.trim(), devCodeRef.paths);
+        for (let i = 0; i < fromGit.length && files.length < DEV_CODE_FILE_MAX_COUNT; i++) {
+          files.push(fromGit[i]);
+        }
+        if (fromGit.length > 0) {
+          console.log(`[生成测试用例] 从 Git 提交 ${devCodeRef.commit} 拉取 ${fromGit.length} 个文件: ${fromGit.map((f) => f.name).join(", ")}`);
+        } else {
+          console.warn("[生成测试用例] 从 Git 拉取结果为空，请检查 commit/分支名是否正确、路径过滤是否过严。");
+        }
+      } catch (e) {
+        console.error("[生成测试用例] 根据提交记录拉取代码失败:", e instanceof Error ? e.message : e);
+        throw new Error("根据提交记录拉取代码失败：" + (e instanceof Error ? e.message : String(e)));
+      }
+    }
+  }
+
+  if (Array.isArray(rawFiles) && rawFiles.length > 0) {
+    for (let i = 0; i < rawFiles.length && files.length < DEV_CODE_FILE_MAX_COUNT; i++) {
+      const f = rawFiles[i];
+      const name = typeof f?.name === "string" ? f.name.trim() || `code-${i + 1}` : `code-${i + 1}`;
+      const content = typeof f?.content === "string" ? f.content.trim() : "";
+      if (!content) continue;
+      const snippet =
+        content.length <= DEV_CODE_FILE_MAX_LENGTH
+          ? content
+          : content.slice(0, DEV_CODE_FILE_MAX_LENGTH) + "\n\n...(已截断)";
+      files.push({ name, content: snippet });
+    }
+    console.log(`[生成测试用例] 开发代码（skill 方式）: ${files.length} 个文件`);
+  }
+  const devCode = typeof rawDevCode === "string" ? rawDevCode.trim() : "";
+  if (devCode && files.length < DEV_CODE_FILE_MAX_COUNT) {
+    const snippet =
+      devCode.length <= DEV_CODE_FILE_MAX_LENGTH
+        ? devCode
+        : devCode.slice(0, DEV_CODE_FILE_MAX_LENGTH) + "\n\n...(已截断)";
+    files.push({ name: "粘贴的代码", content: snippet });
+  }
+
+  const hasDevCode = files.length > 0;
+  if (hasDevCode) console.log(`[生成测试用例] 已附带开发代码（${files.length} 个片段），以文档形式带给模型`);
+
+  const systemPrompt = `你是一名测试工程师。请根据以下需求描述生成测试用例，严格参照给定的结构。需求描述将在稍后提供。${hasDevCode ? "若提供了开发代码（以文件/文档形式给出），请结合各文件中的接口、分支与异常生成用例，使步骤、预期和验证点与实现一致。" : ""}
 
 覆盖要求：
 - 需全面覆盖需求中的主流程、关键分支、边界条件、异常/错误场景（异常包括：输入无效数据、网络超时、服务器错误、权限不足等）。
@@ -41,12 +125,36 @@ export async function generateTestCases(options: {
 只输出一个 JSON 数组，不要其他说明。格式示例：
 [{"featurePointL1":"群红包","featurePoint":"红包领取","title":"...","priority":"P1","preconditions":"...","steps":"...","expected":"...","validationPoints":["验证点1","验证点2"]}]
 caseId 由系统分配，无需在输出中填写。`;
-  const userPrompt = `## 当前需求\n${fullContent}\n\n请根据上述需求全面生成测试用例 JSON 数组：覆盖正常流程、分支、边界与异常，数量要足够（按需求复杂度生成，通常 5～30 条）。每条务必包含 featurePointL1、featurePoint、title、priority、preconditions、steps、expected、validationPoints。`;
+  let userPrompt = `## 当前需求\n${fullContent}\n\n请根据上述需求全面生成测试用例 JSON 数组：覆盖正常流程、分支、边界与异常，数量要足够（按需求复杂度生成，通常 5～30 条）。每条务必包含 featurePointL1、featurePoint、title、priority、preconditions、steps、expected、validationPoints。`;
+  if (hasDevCode) {
+    const codeSection = files
+      .map(
+        (f) =>
+          `### 文件: ${f.name}\n\`\`\`${langFromFilename(f.name)}\n${f.content}\n\`\`\``
+      )
+      .join("\n\n");
+    userPrompt += `\n\n## 开发代码（实现参考，以文档形式提供）\n以下为实现该需求的相关代码文件，请结合需求与各文件内容生成测试用例，使步骤、预期和验证点与实现一致（如接口字段、错误码、分支逻辑）。\n\n${codeSection}`;
+  }
 
-  console.log(`[生成测试用例] 开始调用模型...`);
-  const content = await chat([
-    { role: "system", content: systemPrompt },
-    { role: "user", content: userPrompt },
+  const CHAT_TIMEOUT_MS = 5 * 60 * 1000; // 5 分钟，带开发代码时模型响应较慢
+  const PREVIEW_LEN = 800;
+  const USER_PREVIEW_LEN = 2000;
+  console.log(`[生成测试用例] 提供给模型的内容预览 —— systemPrompt 长度=${systemPrompt.length}`);
+  console.log(`[生成测试用例] systemPrompt 前 ${PREVIEW_LEN} 字:\n${systemPrompt.slice(0, PREVIEW_LEN)}${systemPrompt.length > PREVIEW_LEN ? "\n...(省略)" : ""}`);
+  console.log(`[生成测试用例] userPrompt 长度=${userPrompt.length}`);
+  console.log(`[生成测试用例] userPrompt 前 ${USER_PREVIEW_LEN} 字:\n${userPrompt.slice(0, USER_PREVIEW_LEN)}${userPrompt.length > USER_PREVIEW_LEN ? "\n...(省略)" : ""}`);
+  console.log(`[生成测试用例] 开始调用模型（超时 ${CHAT_TIMEOUT_MS / 1000}s）...`);
+  const content = await Promise.race([
+    chat([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ]),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("生成超时（模型响应过慢）。请减少开发代码量或稍后重试。")),
+        CHAT_TIMEOUT_MS
+      )
+    ),
   ]);
 
   const arr = parseJsonBlock(content) as {

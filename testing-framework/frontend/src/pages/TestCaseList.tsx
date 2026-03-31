@@ -5,7 +5,7 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, ThunderboltOutlined, Export
 import { useState, useEffect, useRef } from "react";
 import { testCasesApi } from "../api/test-cases";
 import { requirementsApi } from "../api/requirements";
-import { generateApi } from "../api/generate";
+import { generateApi, readFilesAsDevCodeFiles } from "../api/generate";
 import { exportApi } from "../api/export";
 import type { TestCase } from "../api/client";
 
@@ -32,6 +32,8 @@ export default function TestCaseList() {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [genCodeFiles, setGenCodeFiles] = useState<File[]>([]);
+  const genCodeFileInputRef = useRef<HTMLInputElement>(null);
   const client = useQueryClient();
   const GEN_JOB_KEY = "testCasesGenJobId";
 
@@ -59,8 +61,9 @@ export default function TestCaseList() {
       form.resetFields();
       message.success("创建成功");
     },
-    onError: (e: { response?: { data?: { error?: string } } }) =>
-      message.error(e.response?.data?.error ?? "创建失败"),
+    onError: (e: { response?: { data?: { error?: string } } }) => {
+      message.error(e.response?.data?.error ?? "创建失败");
+    },
   });
   const update = useMutation(
     (p: { id: string; data: Parameters<typeof testCasesApi.update>[1] }) =>
@@ -72,8 +75,9 @@ export default function TestCaseList() {
         form.resetFields();
         message.success("更新成功");
       },
-      onError: (e: { response?: { data?: { error?: string } } }) =>
-        message.error(e.response?.data?.error ?? "更新失败"),
+      onError: (e: { response?: { data?: { error?: string } } }) => {
+        message.error(e.response?.data?.error ?? "更新失败");
+      },
     }
   );
   const remove = useMutation(testCasesApi.delete, {
@@ -81,8 +85,9 @@ export default function TestCaseList() {
       client.invalidateQueries("test-cases");
       message.success("已删除");
     },
-    onError: (e: { response?: { data?: { error?: string } } }) =>
-      message.error(e.response?.data?.error ?? "删除失败"),
+    onError: (e: { response?: { data?: { error?: string } } }) => {
+      message.error(e.response?.data?.error ?? "删除失败");
+    },
   });
   const batchRemove = useMutation(
     (ids: string[]) => testCasesApi.batchDelete(ids),
@@ -92,16 +97,27 @@ export default function TestCaseList() {
         setSelectedRowKeys([]);
         message.success(`已批量删除 ${data.deleted} 条`);
       },
-      onError: (e: { response?: { data?: { error?: string } } }) =>
-        message.error(e.response?.data?.error ?? "批量删除失败"),
+      onError: (e: { response?: { data?: { error?: string } } }) => {
+        message.error(e.response?.data?.error ?? "批量删除失败");
+      },
     }
   );
   const genCasesStart = useMutation(
-    (params: { requirementId: string; includeHistory: boolean; historyCount: number }) =>
+    (params: {
+      requirementId: string;
+      includeHistory: boolean;
+      historyCount: number;
+      devCode?: string;
+      devCodeFiles?: { name: string; content: string }[];
+      devCodeRef?: { commit: string; paths?: string[] };
+    }) =>
       generateApi.testCasesStart({
         requirementId: params.requirementId,
         includeHistory: params.includeHistory,
         historyCount: params.historyCount,
+        devCode: params.devCode,
+        devCodeFiles: params.devCodeFiles,
+        devCodeRef: params.devCodeRef,
       }),
     {
       onSuccess: (data) => {
@@ -115,10 +131,13 @@ export default function TestCaseList() {
         setTimeout(() => {
           setGenModalOpen(false);
           genForm.resetFields();
+          setGenCodeFiles([]);
+          if (genCodeFileInputRef.current) genCodeFileInputRef.current.value = "";
         }, 1000);
       },
-      onError: (e: { response?: { data?: { error?: string } } }) =>
-        message.error(e.response?.data?.error ?? "提交失败"),
+      onError: (e: { response?: { data?: { error?: string } } }) => {
+        message.error(e.response?.data?.error ?? "提交失败");
+      },
     }
   );
 
@@ -157,7 +176,7 @@ export default function TestCaseList() {
       }).catch(() => {});
     };
     poll();
-    genCasesPollRef.current = setInterval(poll, 10000);
+    genCasesPollRef.current = setInterval(poll, 4000);
     return () => {
       if (genCasesPollRef.current) clearInterval(genCasesPollRef.current);
     };
@@ -170,8 +189,20 @@ export default function TestCaseList() {
     }
   }, [genCasesJobId, genCasesJobStatus]);
 
-  const doGenerateCases = (requirementId: string) => {
-    genCasesStart.mutate({ requirementId, includeHistory, historyCount });
+  const doGenerateCases = (
+    requirementId: string,
+    devCode?: string,
+    devCodeFiles?: { name: string; content: string }[],
+    devCodeRef?: { commit: string; paths?: string[] }
+  ) => {
+    genCasesStart.mutate({
+      requirementId,
+      includeHistory,
+      historyCount,
+      devCode: devCode?.trim() || undefined,
+      devCodeFiles,
+      devCodeRef,
+    });
   };
 
   const closeGenModal = () => {
@@ -179,6 +210,8 @@ export default function TestCaseList() {
     setGenCasesJobResult(null);
     setGenCasesJobError(null);
     genForm.resetFields();
+    setGenCodeFiles([]);
+    if (genCodeFileInputRef.current) genCodeFileInputRef.current.value = "";
     // 不清 jobId/status，以便刷新或切页后回到本页仍能继续轮询；仅关闭弹框
     if (genCasesPollRef.current) {
       clearInterval(genCasesPollRef.current);
@@ -217,9 +250,27 @@ export default function TestCaseList() {
   };
 
   const handleGenSubmit = () => {
-    genForm.validateFields().then((v) => {
+    genForm.validateFields().then(async (v) => {
       const requirementId = v.requirementId as string;
-      doGenerateCases(requirementId);
+      let devCode = (v.devCode as string)?.trim() || undefined;
+      if (devCode && devCode.length > 12000) {
+        message.info("开发代码已截断至 12000 字参与生成，避免请求过大或超时");
+        devCode = devCode.slice(0, 12000);
+      }
+      let devCodeFiles: { name: string; content: string }[] | undefined;
+      if (genCodeFiles.length > 0) {
+        try {
+          devCodeFiles = await readFilesAsDevCodeFiles(genCodeFiles);
+        } catch (e) {
+          message.error(e instanceof Error ? e.message : "读取代码文件失败");
+          return;
+        }
+      }
+      const commit = (v.devCodeRefCommit as string)?.trim();
+      const pathsStr = (v.devCodeRefPaths as string)?.trim();
+      const paths = pathsStr ? pathsStr.split(/[,，]/).map((s) => s.trim()).filter(Boolean) : undefined;
+      const devCodeRef = commit ? { commit, paths } : undefined;
+      doGenerateCases(requirementId, devCode, devCodeFiles, devCodeRef);
     });
   };
 
@@ -514,7 +565,7 @@ export default function TestCaseList() {
         okButtonProps={{ disabled: genCasesJobStatus === "pending" || genCasesJobStatus === "running" }}
       >
         <p style={{ color: "#cbd5e1", marginBottom: 16 }}>
-          将根据所选需求内容（及可选的历史相关需求）调用模型直接生成测试用例。
+          将根据所选需求内容（及可选的历史相关需求）调用模型直接生成测试用例。提交后弹窗会关闭，列表页将显示「正在生成…」直至完成。
         </p>
         {genCasesJobStatus === "pending" && (
           <div style={{ marginBottom: 16, padding: 12, background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid rgba(255,255,255,0.08)" }}>
@@ -564,6 +615,45 @@ export default function TestCaseList() {
               />
             </Form.Item>
           )}
+          <Form.Item
+            name="devCodeRefCommit"
+            label="或按提交记录拉取代码"
+            extra="填写 commit SHA 或分支名（如 main），后端从配置的 Git 仓库（DEV_CODE_REPO_PATH）自动取该版本的代码参与生成。"
+          >
+            <Input placeholder="commit 或分支，如 abc1234、main" allowClear />
+          </Form.Item>
+          <Form.Item name="devCodeRefPaths" label="代码路径（可选）">
+            <Input placeholder="路径前缀，逗号分隔，如 src/,lib/（不填则取全仓代码，最多 6 个文件）" allowClear />
+          </Form.Item>
+          <Form.Item
+            label="开发代码（可选，推荐以文件形式提供）"
+            extra="上传代码文件会以「文档/技能」形式带给模型（带文件名与语言），便于模型按文件理解；也可粘贴片段。"
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <input
+                ref={genCodeFileInputRef}
+                type="file"
+                multiple
+                accept=".ts,.tsx,.js,.jsx,.vue,.py,.go,.java,.rs,.txt,.json,.md,.css,.html"
+                style={{ fontSize: 12 }}
+                onChange={(e) => {
+                  const list = e.target.files ? Array.from(e.target.files) : [];
+                  setGenCodeFiles(list);
+                }}
+              />
+              {genCodeFiles.length > 0 && (
+                <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
+                  已选 {genCodeFiles.length} 个文件：{genCodeFiles.map((f) => f.name).join("、")}
+                </span>
+              )}
+            </div>
+          </Form.Item>
+          <Form.Item name="devCode" label="或粘贴代码片段">
+            <Input.TextArea
+              rows={4}
+              placeholder="无文件时可在此粘贴关键代码；与上传文件可同时使用。"
+            />
+          </Form.Item>
         </Form>
       </Modal>
       <Modal

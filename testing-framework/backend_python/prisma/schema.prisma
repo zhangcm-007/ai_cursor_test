@@ -1,0 +1,135 @@
+// Python 后端专用 SQLite（与 backend/prisma 互不共用）
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../data/python.db"
+}
+
+model Requirement {
+  id          String                  @id @default(cuid())
+  title       String
+  content     String                  @default("")
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  testCases   TestCase[]
+  attachments RequirementAttachment[]
+}
+
+model RequirementAttachment {
+  id              String      @id @default(cuid())
+  requirementId   String
+  requirement     Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  filename        String
+  filePath        String
+  mimeType        String      @default("")
+  size            Int         @default(0)
+  extractedText   String?
+  createdAt       DateTime    @default(now())
+}
+
+model TestCase {
+  id               String       @id @default(cuid())
+  requirementId    String
+  requirement      Requirement  @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  caseId           String
+  featurePointL1   String       @default("")
+  featurePoint     String       @default("")
+  title            String
+  priority         String       @default("P1")
+  preconditions    String       @default("")
+  steps            String       @default("")
+  expected         String       @default("")
+  validationPoints String       @default("")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+}
+
+model ApiEnvironment {
+  id        String   @id @default(cuid())
+  name      String
+  baseUrl   String
+  variables String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  runs      ApiRun[]
+  schedules ApiRegressionSchedule[]
+}
+
+model ApiCollection {
+  id          String   @id @default(cuid())
+  name        String
+  description String   @default("")
+  definition  String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  runs        ApiRun[]
+  schedules   ApiRegressionSchedule[]
+}
+
+model ApiRegressionSchedule {
+  id             String         @id @default(cuid())
+  name           String
+  cronExpression String
+  regressionMode String         @default("full")
+  environmentId  String
+  environment    ApiEnvironment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  collectionId   String
+  collection     ApiCollection  @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  enabled        Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model ApiEndpoint {
+  id             String   @id @default(cuid())
+  method         String
+  path           String
+  name           String   @default("")
+  description    String   @default("")
+  protocol       String   @default("http")
+  sampleRequest  String   @default("")
+  sampleHeaders  String   @default("")
+  /// 调试弹窗保存的快照 JSON；未保存则每次从 sample 推导
+  debugDraft     String   @default("{}")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model ApiRun {
+  id                String         @id @default(cuid())
+  status            String
+  triggeredBy       String         @default("manual")
+  regressionMode    String         @default("full")
+  correlationId     String?
+  requirementId     String?
+  environmentId     String
+  environment       ApiEnvironment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentName   String         @default("")
+  baseUrlSnapshot   String         @default("")
+  collectionId      String
+  collection        ApiCollection  @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  startedAt         DateTime       @default(now())
+  finishedAt        DateTime?
+  errorMessage      String?
+  steps             ApiRunStep[]
+}
+
+model ApiRunStep {
+  id                 String  @id @default(cuid())
+  runId              String
+  run                ApiRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  orderIndex         Int
+  name               String
+  requestMethod      String  @default("")
+  requestUrl         String  @default("")
+  statusCode         Int?
+  passed             Boolean @default(false)
+  error              String?
+  requestBodyMasked  String?
+  responseBodyMasked String?
+  assertionResults   String  @default("[]")
+  durationMs         Int?
+}

@@ -1,48 +1,44 @@
-# 测试用例生成框架
+# 测试平台（前后端）
 
-**根目录**：`D:\ai_code\testing-framework`
+## 一键开发
 
-基于需求文档提炼测试点、生成测试用例，并支持导出为 XMind 思维导图。
+在 **`testing-framework`** 根目录：
 
-## 目录结构
-
-```
-D:\ai_code\testing-framework\
-├── README.md                 # 本说明
-├── 01-需求文档/              # 放置原始需求
-├── 02-测试点/                # 提炼的测试点
-├── 03-测试用例/              # 生成的测试用例（Markdown）
-├── 04-导出XMind/             # 导出的 .xmind 文件与转换脚本
-├── 模板/                     # 各产出物格式模板
-└── tools/                    # 工具脚本（Markdown → XMind）
+```bash
+npm install
+cd backend && npm install && cd ../frontend && npm install && cd ..
+npm run dev
 ```
 
-## 使用流程
+- **API**：`http://localhost:3001`（避免与常见 3000 端口冲突）
+- **前端**：默认 `http://localhost:5173`；若 5173 被占用，Vite 会自动顺延（5174、5175…）
 
-1. **提供需求**：将需求放入 `01-需求文档/` 或在对话中粘贴。
-2. **提炼测试点**：生成 `02-测试点/` 下的测试点文档。
-3. **生成测试用例**：生成 `03-测试用例/` 下的用例文档（Markdown）。
-4. **导出 XMind**：使用 `tools/` 下脚本或 `04-导出XMind/` 中的说明，将测试用例转为 .xmind。
+### 若必须打开 `http://localhost:3000`
 
-## 导出为 XMind
+1. 先释放本机占用的 **3000** 端口  
+2. 执行：`npm run dev:web3000`（前端固定 3000，仍代理 API 到 3001）
 
-- **方式一（推荐）**：运行 `tools/export_to_xmind.py`，将 `03-测试用例/` 中的用例 Markdown 转为 .xmind，输出到 `04-导出XMind/`。
-- **方式二**：将 `03-测试用例/` 中的「XMind 用大纲」文件（见模板）用 XMind 客户端：**文件 → 导入 → 大纲** 导入。
+### 控制台自检（Playwright）
 
-## 如何向 AI 提问（生成测试用例）
+先保持 `npm run dev` 运行，再在根目录：
 
-在对话里按下面方式说即可，我会按框架在 `03-测试用例/` 下生成文档：
+```bash
+npm run dev:capture
+```
 
-| 你想做的 | 怎么说 |
-|----------|--------|
-| 根据已有测试点生成测试用例 | 「根据 **三角形** 的测试点，生成测试用例」 |
-| 只生成某一部分 | 「根据 **三角形** 的测试点，只生成 **功能测试** 的测试用例」 |
-| 同时要 XMind 用大纲 | 「根据 **三角形** 的测试点生成测试用例，并生成 **XMind 用大纲**」 |
-| 指定别的测试点文档 | 「根据 **02-测试点/某某模块-测试点.md** 生成测试用例」 |
-| 没有测试点、只有需求 | 「根据 **xx 需求** 先提炼测试点，再生成测试用例」 |
+脚本会探测 **5173–5190** 上的 Vite 并访问主要路由；若端口不固定，可指定：
 
-说明：文档名或模块名（如「三角形」）说清楚即可，我会去 `02-测试点/` 找对应文档并生成用例。
+```bash
+set BASE_URL=http://127.0.0.1:5174
+npm run dev:capture
+```
 
-## 后续操作
+## 说明
 
-在对话中提供需求或说明「根据 xx 生成测试点/测试用例」，产出将写入上述目录；需要 XMind 时说明「同时生成可导出 XMind 的用例结构」即可。
+- 仅启动 **frontend** 的 `npm run dev` 时，需自行启动后端，且请在 `frontend/vite.config.ts` 中保持 `/api` 代理与后端端口一致（默认 **3001**）。
+
+### Node 与 Python 后端（已隔离）
+
+- **Node**（`backend/`）：`prisma/dev.db`，需求/用例等；`cd backend && npx prisma db push`。
+- **Python**（`backend_python/`）：`data/python.db`，含需求/用例与接口回归等；`cd backend_python && npm install && npm run db:push`。环境变量默认只读 **`backend_python/.env`**。
+- 详见 [backend_python/README.md](backend_python/README.md)、[docs/API_REGRESSION.md](docs/API_REGRESSION.md)。

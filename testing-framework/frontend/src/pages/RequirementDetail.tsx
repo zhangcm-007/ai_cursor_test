@@ -5,13 +5,18 @@ import { ThunderboltOutlined } from "@ant-design/icons";
 import { useState, useEffect, useRef } from "react";
 import { requirementsApi } from "../api/requirements";
 import { attachmentsApi } from "../api/attachments";
-import { generateApi } from "../api/generate";
+import { generateApi, readFilesAsDevCodeFiles } from "../api/generate";
 import type { RequirementAttachment } from "../api/client";
 
 export default function RequirementDetail() {
   const { id } = useParams<{ id: string }>();
   const [includeHistory, setIncludeHistory] = useState(false);
   const [historyCount, setHistoryCount] = useState(5);
+  const [devCode, setDevCode] = useState("");
+  const [devCodeFileList, setDevCodeFileList] = useState<File[]>([]);
+  const [devCodeRefCommit, setDevCodeRefCommit] = useState("");
+  const [devCodeRefPaths, setDevCodeRefPaths] = useState("");
+  const devCodeFileInputRef = useRef<HTMLInputElement>(null);
   const [genCasesJobId, setGenCasesJobId] = useState<string | null>(null);
   const [genCasesJobStatus, setGenCasesJobStatus] = useState<"pending" | "running" | "completed" | "failed" | null>(null);
   const pollCasesRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -24,14 +29,33 @@ export default function RequirementDetail() {
   );
 
   const genCasesStart = useMutation(
-    () => generateApi.testCasesStart({ requirementId: id!, includeHistory, historyCount }),
+    (variables: {
+      devCode?: string;
+      devCodeFiles?: { name: string; content: string }[];
+      devCodeRef?: { commit: string; paths?: string[] };
+    }) => {
+      let code = (variables.devCode ?? devCode).trim() || undefined;
+      if (code && code.length > 12000) {
+        code = code.slice(0, 12000);
+        message.info("开发代码已截断至 12000 字参与生成");
+      }
+      return generateApi.testCasesStart({
+        requirementId: id!,
+        includeHistory,
+        historyCount,
+        devCode: code,
+        devCodeFiles: variables.devCodeFiles,
+        devCodeRef: variables.devCodeRef,
+      });
+    },
     {
       onSuccess: (data) => {
         setGenCasesJobId(data.jobId);
         setGenCasesJobStatus("pending");
       },
-      onError: (e: { response?: { data?: { error?: string } } }) =>
-        message.error(e.response?.data?.error ?? "提交失败"),
+      onError: (e: { response?: { data?: { error?: string } } }) => {
+        message.error(e.response?.data?.error ?? "提交失败");
+      },
     }
   );
 
@@ -89,7 +113,27 @@ export default function RequirementDetail() {
             type="primary"
             icon={<ThunderboltOutlined />}
             loading={genCasesStart.isLoading || genCasesJobStatus === "pending" || genCasesJobStatus === "running"}
-            onClick={() => genCasesStart.mutate()}
+            onClick={async () => {
+              let devCodeFiles: { name: string; content: string }[] | undefined;
+              if (devCodeFileList.length > 0) {
+                try {
+                  devCodeFiles = await readFilesAsDevCodeFiles(devCodeFileList);
+                } catch (e) {
+                  message.error(e instanceof Error ? e.message : "读取代码文件失败");
+                  return;
+                }
+              }
+              const commit = devCodeRefCommit.trim();
+              const paths = devCodeRefPaths.trim()
+                ? devCodeRefPaths.split(/[,，]/).map((s) => s.trim()).filter(Boolean)
+                : undefined;
+              const devCodeRef = commit ? { commit, paths } : undefined;
+              genCasesStart.mutate({
+                devCode: devCode.trim() || undefined,
+                devCodeFiles,
+                devCodeRef,
+              });
+            }}
           >
             {genCasesJobStatus === "pending" || genCasesJobStatus === "running"
               ? (genCasesJobStatus === "pending" ? "排队中…" : "运行中…")
@@ -112,6 +156,54 @@ export default function RequirementDetail() {
                 />
               </span>
             )}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ marginBottom: 4, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
+              或按提交记录拉取代码
+            </div>
+            <Input
+              placeholder="commit 或分支，如 abc1234、main（需后端配置 DEV_CODE_REPO_PATH）"
+              value={devCodeRefCommit}
+              onChange={(e) => setDevCodeRefCommit(e.target.value)}
+              style={{ marginBottom: 6 }}
+            />
+            <Input
+              placeholder="路径前缀，逗号分隔，如 src/,lib/（可选）"
+              value={devCodeRefPaths}
+              onChange={(e) => setDevCodeRefPaths(e.target.value)}
+              style={{ marginBottom: 12 }}
+            />
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <div style={{ marginBottom: 4, color: "rgba(255,255,255,0.65)", fontSize: 12 }}>
+              开发代码（可选，推荐上传文件，以文档形式带给模型）
+            </div>
+            <input
+              ref={devCodeFileInputRef}
+              type="file"
+              multiple
+              accept=".ts,.tsx,.js,.jsx,.vue,.py,.go,.java,.rs,.txt,.json,.md,.css,.html"
+              style={{ fontSize: 12, marginBottom: 8 }}
+              onChange={(e) => {
+                const list = e.target.files ? Array.from(e.target.files) : [];
+                setDevCodeFileList(list);
+              }}
+            />
+            {devCodeFileList.length > 0 && (
+              <div style={{ marginBottom: 8, color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
+                已选 {devCodeFileList.length} 个文件：{devCodeFileList.map((f) => f.name).join("、")}
+              </div>
+            )}
+            <Input.TextArea
+              rows={4}
+              value={devCode}
+              onChange={(e) => setDevCode(e.target.value)}
+              placeholder="或粘贴代码片段（可与上传文件同时使用）"
+              style={{ fontFamily: "monospace" }}
+            />
+            <div style={{ marginTop: 4, color: "rgba(255,255,255,0.45)", fontSize: 12 }}>
+              上传文件会带文件名与语言标识，便于模型按文档理解。
+            </div>
           </div>
         </div>
       </Card>
