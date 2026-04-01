@@ -16,7 +16,8 @@ const BUILTIN_PLACEHOLDERS = [
   { syntax: "{{$randEmail|manji|}}", desc: "固定前缀，默认域名", example: "manji382715@example.com" },
   { syntax: "{{$randEmail||qq.com}}", desc: "默认前缀，固定域名", example: "test382715@qq.com" },
   { syntax: "{{$randEmail|manji|qq.com}}", desc: "固定前缀 + 固定域名", example: "manji382715@qq.com" },
-  { syntax: "{{$encPwd|明文密码}}", desc: "AiWealth 密码混淆", example: "2pSO2UDNzITMhFEQ6llJ" },
+  { syntax: "{{$encPwd|明文密码}}", desc: "AiWealth 密码混淆（显式传入）", example: "2pSO2UDNzITMhFEQ6llJ" },
+  { syntax: "{{rawPwd}}", desc: "变量名以 Pwd 结尾 → 引用时自动加密", example: "rawPwd=Aa123456 → 加密值" },
 ];
 
 function BuiltinPlaceholderHelp() {
@@ -60,6 +61,11 @@ function BuiltinPlaceholderHelp() {
                 ))}
               </tbody>
             </table>
+            <div style={{ marginTop: 10, padding: "6px 10px", background: "rgba(250,173,20,0.08)", borderRadius: 4, border: "1px solid rgba(250,173,20,0.25)" }}>
+              <Typography.Text style={{ fontSize: 11, color: "#faad14" }}>
+                提示：变量名以 <b>Pwd</b> 结尾（如 rawPwd、loginPwd），值填明文密码，引用时自动进行 AiWealth 密码加密。
+              </Typography.Text>
+            </div>
           </div>
         ),
       }]}

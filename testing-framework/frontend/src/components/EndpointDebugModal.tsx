@@ -24,6 +24,7 @@ import {
   DeleteOutlined,
   ImportOutlined,
 } from "@ant-design/icons";
+import { HeadersFieldList, headersListToObject, type HeaderRow } from "./HeadersFieldList";
 import {
   apiRegressionApi,
   type ApiDebugResult,
@@ -50,6 +51,60 @@ import {
 import { resolveJsonPath } from "../utils/jsonPathAssert";
 
 const { TextArea } = Input;
+
+function HeadersTable({ raw }: { raw: string | Record<string, unknown> | undefined | null }) {
+  const entries = useMemo(() => {
+    if (!raw) return [];
+    let obj: Record<string, unknown>;
+    if (typeof raw === "string") {
+      const t = raw.trim();
+      if (!t) return [];
+      try {
+        obj = JSON.parse(t) as Record<string, unknown>;
+      } catch {
+        return t.split(/\r?\n/).filter(Boolean).map((line) => {
+          const idx = line.indexOf(":");
+          return idx >= 0
+            ? { k: line.slice(0, idx).trim(), v: line.slice(idx + 1).trim() }
+            : { k: line.trim(), v: "" };
+        });
+      }
+    } else {
+      obj = raw;
+    }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
+    return Object.entries(obj).map(([k, v]) => ({ k, v: String(v ?? "") }));
+  }, [raw]);
+
+  if (entries.length === 0) {
+    return <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", margin: "6px 0 12px" }}>（无）</Typography.Text>;
+  }
+
+  return (
+    <div style={{ margin: "6px 0 12px", borderRadius: 6, overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(120px, 1fr) minmax(200px, 2fr)",
+          fontSize: 12,
+        }}
+      >
+        <div style={{ padding: "4px 8px", background: "rgba(255,255,255,0.06)", fontWeight: 600, color: "#8c8c8c" }}>Header</div>
+        <div style={{ padding: "4px 8px", background: "rgba(255,255,255,0.06)", fontWeight: 600, color: "#8c8c8c" }}>Value</div>
+        {entries.map((e, i) => (
+          <>
+            <div key={`k-${i}`} style={{ padding: "3px 8px", borderTop: "1px solid rgba(255,255,255,0.04)", fontFamily: "monospace", wordBreak: "break-all" }}>
+              {e.k}
+            </div>
+            <div key={`v-${i}`} style={{ padding: "3px 8px", borderTop: "1px solid rgba(255,255,255,0.04)", fontFamily: "monospace", wordBreak: "break-all" }}>
+              {e.v}
+            </div>
+          </>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function parseDebugBody(text: string): { json?: unknown; body?: string } {
   const t = text.trim();
@@ -218,9 +273,12 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     if (!environments.length) return;
     const base = buildDebugModalDefaults(localEp, environments);
     const merged = mergeDebugDraftIntoDefaults(base, localEp.debugDraft, environments);
-    debugForm.setFieldsValue(merged);
+    const timer = setTimeout(() => {
+      debugForm.setFieldsValue(merged);
+    }, 0);
     setDebugResult(null);
     setFormInited(true);
+    return () => clearTimeout(timer);
   }, [open, localEp, environments, debugForm, formInited]);
 
   const resolveDebugEnvironment = (): { envId: string; env: ApiEnvironment } | null => {
@@ -390,18 +448,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
           form={debugForm}
           layout="vertical"
           onFinish={(v) => {
-            let headers: Record<string, string> = {};
-            try {
-              const ho = JSON.parse((v.headers as string) || "{}");
-              if (ho && typeof ho === "object" && !Array.isArray(ho)) {
-                headers = Object.fromEntries(
-                  Object.entries(ho as Record<string, unknown>).map(([k, val]) => [k, String(val)])
-                );
-              }
-            } catch {
-              message.error("Headers 须为合法 JSON 对象");
-              return;
-            }
+            const headers = headersListToObject(v.headerList as HeaderRow[] | undefined);
             const { json, body } = parseDebugBody(String(v.body || ""));
             const envId = v.environmentId as string | undefined;
             if (!envId) {
@@ -459,8 +506,8 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
               <Input type="number" min={1} max={120} />
             </Form.Item>
           </Space>
-          <Form.Item label="Headers（JSON 对象）" name="headers">
-            <TextArea rows={4} style={{ fontFamily: "monospace", fontSize: 12 }} />
+          <Form.Item label="请求头">
+            <HeadersFieldList listName="headerList" />
           </Form.Item>
           <Form.Item label="Body（JSON 对象/数组走 application/json；否则按原始文本发送）" name="body">
             <TextArea rows={6} style={{ fontFamily: "monospace", fontSize: 12 }} />
@@ -577,22 +624,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
               </Typography.Text>
             </div>
             <Typography.Text strong>请求头</Typography.Text>
-            <pre
-              style={{
-                marginTop: 6,
-                marginBottom: 12,
-                maxHeight: 200,
-                overflow: "auto",
-                fontSize: 12,
-                background: "rgba(0,0,0,0.25)",
-                padding: 8,
-                borderRadius: 6,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-              }}
-            >
-              {(debugResult.requestHeadersMasked ?? "").trim() || "（无）"}
-            </pre>
+            <HeadersTable raw={debugResult.requestHeadersMasked} />
             <Typography.Text strong>请求体</Typography.Text>
             <pre
               style={{
@@ -690,20 +722,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                     key: "headers",
                     label: <Typography.Text strong>响应头</Typography.Text>,
                     children: (
-                      <pre
-                        style={{
-                          marginTop: 0,
-                          marginBottom: 0,
-                          maxHeight: 200,
-                          overflow: "auto",
-                          fontSize: 12,
-                          background: "rgba(0,0,0,0.25)",
-                          padding: 8,
-                          borderRadius: 6,
-                        }}
-                      >
-                        {JSON.stringify(debugResult.responseHeaders || {}, null, 2)}
-                      </pre>
+                      <HeadersTable raw={debugResult.responseHeaders} />
                     ),
                   },
                 ]}

@@ -169,9 +169,8 @@ function tokenizeCurl(input: string): string[] {
 
 const NO_ARG_FLAGS = new Set([
   "-s",
-  "-S",
   "-k",
-  "-L",
+  "-l",
   "-v",
   "--silent",
   "--show-error",
@@ -183,9 +182,9 @@ const NO_ARG_FLAGS = new Set([
 ]);
 
 const ONE_ARG_FLAGS = new Set([
-  "-X",
+  "-x",
   "--request",
-  "-H",
+  "-h",
   "--header",
   "-d",
   "--data",
@@ -281,6 +280,9 @@ export function parseCurlCommand(raw: string): ParsedCurl {
           const name = val.slice(0, idx).trim();
           const v = val.slice(idx + 1).trim();
           if (name.toLowerCase() !== "content-length") headers[name] = v;
+        } else if (val.endsWith(";")) {
+          const name = val.slice(0, -1).trim();
+          if (name) headers[name] = "";
         }
       } else if (
         flag === "-d" ||

@@ -71,6 +71,8 @@ def _builtin_placeholder_value(inner: str) -> str | None:
     - {{$randEmail||域名}}              → test123456@qq.com
     - {{$randEmail|前缀|域名}}          → manji123456@qq.com
     - {{$encPwd|明文密码}}（AiWealth 密码混淆：salt+base64+reverse）
+
+    另外：变量名以 Pwd 结尾（如 rawPwd）的环境变量，引用时在 substitute_vars 中自动加密。
     """
     k = inner.strip()
     if not k.startswith("$"):
@@ -114,6 +116,8 @@ def substitute_vars(text: str, ctx: dict[str, str]) -> str:
     """
     支持多轮展开：例如运行变量 email =「{{$randEmail|qq.com}}」、Body 为「{{email}}」时，
     第一轮得到内置语法字符串，第二轮再解析为随机邮箱。
+
+    命名约定：变量名以 Pwd 结尾（如 rawPwd）的环境变量，引用时自动进行 AiWealth 密码加密。
     """
 
     def repl(m: re.Match[str]) -> str:
@@ -124,6 +128,8 @@ def substitute_vars(text: str, ctx: dict[str, str]) -> str:
         if b is not None:
             return b
         if re.fullmatch(r"\w+", inner) and inner in ctx:
+            if inner.endswith("Pwd"):
+                return _obfuscate_password(str(ctx[inner]))
             return str(ctx[inner])
         if re.fullmatch(r"\w+", inner):
             v = os.environ.get(inner)

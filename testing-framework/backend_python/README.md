@@ -58,3 +58,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 3001
 
 - 生成任务使用内存 `jobId`（多 worker 不共享）。
 - 大 JSON / multipart 可按需调中间件或反向代理限制。
+
+
+
+## 后台运行命令，进到backend_python目录下
+- python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+## 前端运行命令 进到D:\ai_code\testing-framework\frontend目录下
+- npm run dev

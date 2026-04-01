@@ -1,4 +1,5 @@
 import type { ApiEndpoint, ApiEnvironment } from "../api/api-regression";
+import { headersObjectToList, headersListToJsonString, type HeaderRow } from "../components/HeadersFieldList";
 import { defaultDebugAssertRow, type DebugAssertFormRow } from "./debugAssertions";
 import type { RunVarFormRow } from "./runVariablesForm";
 
@@ -9,6 +10,7 @@ const DRAFT_KEYS = [
   "method",
   "path",
   "headers",
+  "headerList",
   "body",
   "timeout",
   "runVarList",
@@ -20,13 +22,13 @@ const DRAFT_KEYS = [
 export function buildDebugModalDefaults(ep: ApiEndpoint, environments: ApiEnvironment[]): Record<string, unknown> {
   const method = (ep.method || "GET").toUpperCase();
   let bodyStr = "";
-  let headersStr = "{}";
+  let headersObj: Record<string, string> = {};
   const shRaw = (ep.sampleHeaders || "").trim();
   if (shRaw) {
     try {
       const ho = JSON.parse(shRaw) as unknown;
       if (ho && typeof ho === "object" && !Array.isArray(ho)) {
-        headersStr = JSON.stringify(ho, null, 2);
+        headersObj = ho as Record<string, string>;
       }
     } catch {
       /* keep {} */
@@ -40,14 +42,14 @@ export function buildDebugModalDefaults(ep: ApiEndpoint, environments: ApiEnviro
         bodyStr = JSON.stringify(o.json, null, 2);
         const h = o.headers;
         if (!shRaw && h && typeof h === "object" && !Array.isArray(h)) {
-          headersStr = JSON.stringify(h, null, 2);
+          headersObj = h as Record<string, string>;
         } else if (!shRaw && method !== "GET" && bodyStr) {
-          headersStr = JSON.stringify({ "Content-Type": "application/json" }, null, 2);
+          headersObj = { "Content-Type": "application/json" };
         }
       } else {
         bodyStr = JSON.stringify(o, null, 2);
         if (!shRaw && method !== "GET") {
-          headersStr = JSON.stringify({ "Content-Type": "application/json" }, null, 2);
+          headersObj = { "Content-Type": "application/json" };
         }
       }
     } catch {
@@ -58,7 +60,7 @@ export function buildDebugModalDefaults(ep: ApiEndpoint, environments: ApiEnviro
     environmentId: environments[0]?.id,
     method,
     path: ep.path,
-    headers: headersStr,
+    headerList: headersObjectToList(headersObj),
     body: bodyStr,
     timeout: 30,
     runVarList: [] as RunVarFormRow[],
@@ -85,8 +87,16 @@ export function mergeDebugDraftIntoDefaults(
       if (k === "assertList" && !Array.isArray(v)) continue;
       if (k === "runVarList" && !Array.isArray(v)) continue;
       if (k === "extractToEnv" && !Array.isArray(v)) continue;
+      if (k === "headerList" && !Array.isArray(v)) continue;
+      if (k === "headers") continue;
       (out as Record<string, unknown>)[k] = v;
     }
+    if (Array.isArray(d.headerList) && d.headerList.length > 0) {
+      out.headerList = d.headerList;
+    } else if (typeof d.headers === "string" && d.headers.trim() && d.headers.trim() !== "{}") {
+      out.headerList = headersObjectToList(d.headers as string);
+    }
+    // draft 中 headers 为空时，保留 base 中从 sampleHeaders 解析的默认值
     const envIds = new Set(environments.map((e) => e.id));
     const eid = out.environmentId;
     if (typeof eid === "string" && eid && !envIds.has(eid)) {
@@ -106,12 +116,14 @@ export function debugFormValuesToDraftJson(v: Record<string, unknown>): string {
   const runVarList = Array.isArray(v.runVarList) ? v.runVarList : [];
   const assertList = Array.isArray(v.assertList) ? v.assertList : [defaultDebugAssertRow()];
   const extractToEnv = Array.isArray(v.extractToEnv) ? v.extractToEnv : [];
+  const headerList = Array.isArray(v.headerList) ? v.headerList : [];
   const to = v.timeout != null ? Number(v.timeout) : 30;
   return JSON.stringify({
     environmentId: v.environmentId ?? null,
     method: v.method,
     path: v.path,
-    headers: (v.headers as string | undefined) ?? "",
+    headers: headersListToJsonString(headerList as HeaderRow[]),
+    headerList,
     body: (v.body as string | undefined) ?? "",
     timeout: Number.isFinite(to) ? to : 30,
     runVarList,
