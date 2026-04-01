@@ -23,8 +23,12 @@ import {
   CloudUploadOutlined,
   DeleteOutlined,
   ImportOutlined,
+  EditOutlined,
+  CheckOutlined,
+  CloseOutlined,
 } from "@ant-design/icons";
-import { HeadersFieldList, headersListToObject, type HeaderRow } from "./HeadersFieldList";
+import { HeadersFieldList, headersObjectToList, headersListToObject, type HeaderRow } from "./HeadersFieldList";
+import { parseCurlCommand } from "../utils/parseCurl";
 import {
   apiRegressionApi,
   type ApiDebugResult,
@@ -181,6 +185,9 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
   const [debugForm] = Form.useForm();
   const [syncToEnvTarget, setSyncToEnvTarget] = useState<number | "all" | null>(null);
   const [formInited, setFormInited] = useState(false);
+  const [curlPaste, setCurlPaste] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
   const qc = useQueryClient();
   const { data: environments = [] } = useQuery("api-envs", apiRegressionApi.environments.list);
 
@@ -189,6 +196,8 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
       setLocalEp(null);
       setDebugResult(null);
       setFormInited(false);
+      setCurlPaste("");
+      setEditingName(false);
       return;
     }
     if (endpoint) setLocalEp(endpoint);
@@ -208,6 +217,76 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
       },
     }
   );
+
+  const updateEpMut = useMutation(
+    ({ id, payload }: { id: string; payload: Record<string, string> }) =>
+      apiRegressionApi.endpoints.update(id, payload),
+    {
+      onSuccess: () => qc.invalidateQueries("api-endpoints"),
+      onError: (e: { response?: { data?: { detail?: string } } }) => {
+        message.error(e.response?.data?.detail ?? "保存失败");
+      },
+    }
+  );
+
+  const handleSaveName = () => {
+    if (!localEp) return;
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      message.warning("名称不能为空");
+      return;
+    }
+    updateEpMut.mutate(
+      { id: localEp.id, payload: { name: trimmed } },
+      {
+        onSuccess: () => {
+          setLocalEp((prev) => (prev ? { ...prev, name: trimmed } : prev));
+          setEditingName(false);
+          message.success("接口名称已更新");
+        },
+      }
+    );
+  };
+
+  const handleParseCurl = () => {
+    if (!curlPaste.trim()) {
+      message.warning("请先粘贴 curl 命令");
+      return;
+    }
+    try {
+      const p = parseCurlCommand(curlPaste);
+      debugForm.setFieldsValue({
+        method: p.method,
+        path: p.path,
+      });
+      const headerList = headersObjectToList(p.headers);
+      if (headerList.length) {
+        setTimeout(() => debugForm.setFieldsValue({ headerList }), 0);
+      }
+      if (p.sampleRequest) {
+        debugForm.setFieldsValue({ body: p.sampleRequest });
+      }
+      if (localEp) {
+        const payload: Record<string, string> = {
+          method: p.method,
+          path: p.path,
+        };
+        if (p.sampleRequest) payload.sampleRequest = p.sampleRequest;
+        if (Object.keys(p.headers).length) payload.sampleHeaders = JSON.stringify(p.headers, null, 2);
+        updateEpMut.mutate({ id: localEp.id, payload }, {
+          onSuccess: () => {
+            setLocalEp((prev) =>
+              prev ? { ...prev, method: p.method, path: p.path, sampleRequest: p.sampleRequest || prev.sampleRequest, sampleHeaders: Object.keys(p.headers).length ? JSON.stringify(p.headers, null, 2) : prev.sampleHeaders } : prev
+            );
+          },
+        });
+      }
+      setCurlPaste("");
+      message.success("已从 curl 填充调试表单");
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : "解析失败");
+    }
+  };
 
   const syncRunVarsToEnvironment = useMutation(
     ({ environmentId, variables }: { environmentId: string; variables: string }) =>
@@ -405,7 +484,35 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
         title={
           localEp ? (
             <Space align="center" wrap>
-              <span>调试 · {localEp.name || localEp.path}</span>
+              {editingName ? (
+                <Space size={4}>
+                  <span>调试 · </span>
+                  <Input
+                    size="small"
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    onPressEnter={handleSaveName}
+                    style={{ width: 200 }}
+                    autoFocus
+                  />
+                  <Button size="small" type="text" icon={<CheckOutlined />} loading={updateEpMut.isLoading} onClick={handleSaveName} />
+                  <Button size="small" type="text" icon={<CloseOutlined />} onClick={() => setEditingName(false)} />
+                </Space>
+              ) : (
+                <Space size={4}>
+                  <span>调试 · {localEp.name || localEp.path}</span>
+                  <Button
+                    size="small"
+                    type="text"
+                    icon={<EditOutlined />}
+                    onClick={() => {
+                      setNameInput(localEp.name || localEp.path || "");
+                      setEditingName(true);
+                    }}
+                    style={{ color: "rgba(255,255,255,0.45)" }}
+                  />
+                </Space>
+              )}
               {hasSavedDebugDraft(localEp.debugDraft) ? (
                 <Tag color="processing">已保存调试草稿</Tag>
               ) : null}
@@ -475,6 +582,44 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
             });
           }}
         >
+          <Collapse
+            bordered={false}
+            style={{ background: "transparent", marginBottom: 12 }}
+            defaultActiveKey={[]}
+            items={[
+              {
+                key: "curl",
+                label: (
+                  <Typography.Text style={{ fontSize: 13 }}>
+                    <ImportOutlined style={{ marginRight: 6 }} />
+                    从 curl 导入
+                  </Typography.Text>
+                ),
+                children: (
+                  <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                    <TextArea
+                      value={curlPaste}
+                      onChange={(e) => setCurlPaste(e.target.value)}
+                      placeholder={`粘贴 Bash 格式 curl 命令，解析后自动填充 Method、Path、Headers、Body：\ncurl 'https://api.example.com/v1/users' \\\n  -H 'Authorization: Bearer xxx' \\\n  -H 'Content-Type: application/json' \\\n  --data '{"name":"a"}'`}
+                      rows={4}
+                      style={{ fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <Button
+                      type="primary"
+                      icon={<ImportOutlined />}
+                      onClick={handleParseCurl}
+                      loading={updateEpMut.isLoading}
+                    >
+                      解析并填充
+                    </Button>
+                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                      仅支持 Bash 格式（macOS/Linux/Git Bash 终端的「复制为 cURL」），Windows CMD 格式也可尝试自动转换。
+                    </Typography.Text>
+                  </Space>
+                ),
+              },
+            ]}
+          />
           {environments.length === 0 ? (
             <Alert
               type="warning"

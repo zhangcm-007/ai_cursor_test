@@ -6,7 +6,6 @@ import {
   UploadOutlined,
   ImportOutlined,
   BugOutlined,
-  EditOutlined,
   ExperimentOutlined,
   LinkOutlined,
 } from "@ant-design/icons";
@@ -20,7 +19,6 @@ const { TextArea } = Input;
 
 export default function ApiRegressionEndpoints() {
   const [open, setOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [curlPaste, setCurlPaste] = useState("");
   const [form] = Form.useForm();
   const [debugOpen, setDebugOpen] = useState(false);
@@ -47,37 +45,6 @@ export default function ApiRegressionEndpoints() {
       message.success("已删除");
     },
   });
-  const updateEp = useMutation(
-    ({
-      id,
-      payload,
-    }: {
-      id: string;
-      payload: {
-        method?: string;
-        path?: string;
-        name?: string;
-        description?: string;
-        protocol?: string;
-        sampleRequest?: string;
-        sampleHeaders?: string;
-        debugDraft?: string;
-      };
-    }) => apiRegressionApi.endpoints.update(id, payload),
-    {
-      onSuccess: () => {
-        qc.invalidateQueries("api-endpoints");
-        message.success("已保存");
-        setOpen(false);
-        setEditingId(null);
-        setCurlPaste("");
-        form.resetFields();
-      },
-      onError: (e: { response?: { data?: { detail?: string } } }) => {
-        message.error(e.response?.data?.detail ?? "保存失败");
-      },
-    }
-  );
   const importJson = useMutation(apiRegressionApi.endpoints.importJson, {
     onSuccess: (r: { created: number }) => {
       qc.invalidateQueries("api-endpoints");
@@ -111,7 +78,6 @@ export default function ApiRegressionEndpoints() {
           type="primary"
           icon={<PlusOutlined />}
           onClick={() => {
-            setEditingId(null);
             setCurlPaste("");
             form.resetFields();
             form.setFieldsValue({ method: "GET", protocol: "http" });
@@ -179,30 +145,9 @@ export default function ApiRegressionEndpoints() {
           { title: "协议", dataIndex: "protocol", width: 90 },
           {
             title: "操作",
-            width: 200,
+            width: 140,
             render: (_, r) => (
               <Space size={0} wrap>
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => {
-                    setEditingId(r.id);
-                    setCurlPaste("");
-                    form.setFieldsValue({
-                      name: r.name || "",
-                      method: r.method || "GET",
-                      path: r.path,
-                      description: r.description || "",
-                      protocol: r.protocol || "http",
-                      sampleRequest: r.sampleRequest || "",
-                      sampleHeaders: r.sampleHeaders || "",
-                    });
-                    setOpen(true);
-                  }}
-                >
-                  编辑
-                </Button>
                 <Button type="link" size="small" icon={<BugOutlined />} onClick={() => openDebug(r)}>
                   调试
                 </Button>
@@ -215,19 +160,15 @@ export default function ApiRegressionEndpoints() {
         ]}
       />
       <Modal
-        title={editingId ? "编辑接口" : "添加接口"}
+        title="添加接口"
         open={open}
-        confirmLoading={create.isLoading || updateEp.isLoading}
-        onCancel={() => {
-          setOpen(false);
-          setEditingId(null);
-        }}
+        confirmLoading={create.isLoading}
+        onCancel={() => setOpen(false)}
         onOk={() => form.submit()}
         destroyOnClose
         afterOpenChange={(vis) => {
           if (!vis) {
             setCurlPaste("");
-            setEditingId(null);
             form.resetFields();
           }
         }}
@@ -238,7 +179,7 @@ export default function ApiRegressionEndpoints() {
           layout="vertical"
           initialValues={{ method: "GET", protocol: "http" }}
           onFinish={(v) => {
-            const payload = {
+            create.mutate({
               method: v.method,
               path: v.path,
               name: (v.name as string)?.trim() || "",
@@ -246,12 +187,7 @@ export default function ApiRegressionEndpoints() {
               protocol: v.protocol,
               sampleRequest: v.sampleRequest || "",
               sampleHeaders: (v.sampleHeaders as string) || "",
-            };
-            if (editingId) {
-              updateEp.mutate({ id: editingId, payload });
-            } else {
-              create.mutate(payload);
-            }
+            });
           }}
         >
           <Form.Item name="name" label="接口名称" rules={[{ required: true, message: "请填写接口名称" }]}>
