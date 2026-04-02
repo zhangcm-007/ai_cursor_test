@@ -255,17 +255,15 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     }
     try {
       const p = parseCurlCommand(curlPaste);
+      const headerList = headersObjectToList(p.headers);
+      const bodyStr = (p.sampleRequest || "").trim();
+      // 一次写入，避免 Form.List(headerList) 与 body 分次 setFieldsValue 导致展示错乱；无 body 时清空旧内容
       debugForm.setFieldsValue({
         method: p.method,
         path: p.path,
+        headerList,
+        body: bodyStr,
       });
-      const headerList = headersObjectToList(p.headers);
-      if (headerList.length) {
-        setTimeout(() => debugForm.setFieldsValue({ headerList }), 0);
-      }
-      if (p.sampleRequest) {
-        debugForm.setFieldsValue({ body: p.sampleRequest });
-      }
       if (localEp) {
         const payload: Record<string, string> = {
           method: p.method,

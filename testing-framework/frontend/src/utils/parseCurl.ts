@@ -167,6 +167,103 @@ function tokenizeCurl(input: string): string[] {
   return tokens;
 }
 
+// Bash/curl 常见「标志与参数粘连」（如 -H 与 Accept 头、-d 与 JSON 无空格连在一起）。
+// 若不拆开，整段无法匹配 ONE_ARG_FLAGS 中的 -h/-d，会被当作未知「-」参数整段丢弃。
+function expandGluedFlagTokens(tokens: string[]): string[] {
+  const out: string[] = [];
+
+  const splitData = (t: string): [string, string] | null => {
+    const tl = t.toLowerCase();
+    const prefixes = ["--data-raw", "--data-binary", "--data", "-d"] as const;
+    for (const prefix of prefixes) {
+      if (tl !== prefix && !tl.startsWith(prefix)) continue;
+      if (tl === prefix) return null;
+      const rest = t.slice(prefix.length);
+      if (rest.startsWith("=")) return [prefix, rest.slice(1)];
+      const q = rest[0];
+      if (q === "'" || q === '"') {
+        if (rest.length >= 2 && rest[rest.length - 1] === q) {
+          return [prefix, rest.slice(1, -1)];
+        }
+        return null;
+      }
+      if (prefix === "-d") {
+        const c = rest[0];
+        if (
+          c &&
+          (c === "=" ||
+            c === "{" ||
+            c === "[" ||
+            c === "(" ||
+            c === "@" ||
+            c === "'" ||
+            c === '"' ||
+            /^\d/.test(rest))
+        ) {
+          return ["-d", rest];
+        }
+        return null;
+      }
+      if (rest.length > 0) return [prefix, rest];
+    }
+    return null;
+  };
+
+  const splitHeader = (t: string): [string, string] | null => {
+    const tl = t.toLowerCase();
+    if (tl.startsWith("--header=")) {
+      return ["--header", t.slice("--header=".length)];
+    }
+    if (tl.startsWith("--header")) {
+      if (tl === "--header") return null;
+      const rest = t.slice("--header".length);
+      if (rest.startsWith("=")) return ["--header", rest.slice(1)];
+      const q = rest[0];
+      if (q === "'" || q === '"') {
+        if (rest.length >= 2 && rest[rest.length - 1] === q) {
+          return ["--header", rest.slice(1, -1)];
+        }
+        return null;
+      }
+      if (rest.length > 0) return ["--header", rest];
+    }
+    if (tl.startsWith("-h") && t.length > 2 && !tl.startsWith("--")) {
+      const rest = t.slice(2);
+      if (rest.startsWith("=")) return ["-h", rest.slice(1)];
+      const q = rest[0];
+      if (q === "'" || q === '"') {
+        if (rest.length >= 2 && rest[rest.length - 1] === q) {
+          return ["-h", rest.slice(1, -1)];
+        }
+        return null;
+      }
+      const ci = rest.indexOf(":");
+      if (ci > 0) {
+        const afterColon = rest.slice(ci + 1, ci + 3);
+        if (afterColon !== "//") {
+          return ["-h", rest];
+        }
+      }
+    }
+    return null;
+  };
+
+  for (const t of tokens) {
+    const data = splitData(t);
+    if (data) {
+      out.push(data[0], data[1]);
+      continue;
+    }
+    const hdr = splitHeader(t);
+    if (hdr) {
+      out.push(hdr[0], hdr[1]);
+      continue;
+    }
+    out.push(t);
+  }
+  return out;
+}
+
 const NO_ARG_FLAGS = new Set([
   "-s",
   "-k",
@@ -244,7 +341,7 @@ export function parseCurlCommand(raw: string): ParsedCurl {
     /\^\s*(\r\n|\n|\r)/.test(text) ||
     /^curl\s+\^"/i.test(text.trimStart());
   const normalized = looksWindowsCmdCurl ? normalizeWindowsCurlCmd(text) : text;
-  const tokens = tokenizeCurl(normalized.replace(/\\\r?\n/g, " "));
+  const tokens = expandGluedFlagTokens(tokenizeCurl(normalized.replace(/\\\r?\n/g, " ")));
   if (tokens.length === 0) throw new Error("无法解析 curl");
 
   let i = 0;
