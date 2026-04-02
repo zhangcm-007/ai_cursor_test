@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import logging
 import random
@@ -16,7 +17,7 @@ from jsonpath_ng import parse as jsonpath_parse
 from sqlalchemy.orm import Session
 
 from app.db_types import utc_naive_now
-from app.models_api import ApiCollection, ApiEnvironment, ApiRun, ApiRunStep
+from app.models_api import ApiCollection, ApiEndpoint, ApiEnvironment, ApiRun, ApiRunStep
 from app.util import new_id
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,149 @@ def _parse_env_variables(raw: str) -> dict[str, str]:
         return {str(k): str(v) if v is not None else "" for k, v in d.items()}
     except json.JSONDecodeError:
         return {}
+
+
+def merged_environment_variables_dict(env: ApiEnvironment) -> dict[str, str]:
+    """
+    环境页「手动 variables」与「自动提取 autoExtractedVariables」合并为请求上下文。
+    同名键以手动 variables 为准。
+    """
+    auto = _parse_env_variables(getattr(env, "autoExtractedVariables", None) or "{}")
+    man = _parse_env_variables(env.variables or "{}")
+    return {**auto, **man}
+
+
+def endpoint_request_json_template(ep: ApiEndpoint) -> Any | None:
+    """
+    与「从接口生成集合步骤」一致：优先 debugDraft.body，其次 sampleRequest。
+    用于把集合里写死的示例值还原成接口上保存的 {{变量}} 模板。
+    """
+    draft: dict[str, Any] = {}
+    raw_dd = getattr(ep, "debugDraft", None) or ""
+    if raw_dd:
+        try:
+            d = json.loads(raw_dd)
+            if isinstance(d, dict):
+                draft = d
+        except (json.JSONDecodeError, TypeError):
+            pass
+    draft_body = (draft.get("body") or "").strip()
+    if draft_body:
+        try:
+            bj = json.loads(draft_body)
+            if isinstance(bj, (dict, list)):
+                return copy.deepcopy(bj)
+        except json.JSONDecodeError:
+            return None
+    sr = (getattr(ep, "sampleRequest", None) or "").strip()
+    if not sr:
+        return None
+    try:
+        sj = json.loads(sr)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(sj, dict):
+        inner = sj.get("json")
+        if inner is not None:
+            return copy.deepcopy(inner)
+        return copy.deepcopy(sj)
+    if isinstance(sj, list):
+        return copy.deepcopy(sj)
+    return None
+
+
+def merge_definition_json_with_endpoint_template(def_json: Any, ep_json: Any) -> Any:
+    """
+    集合 definition 里常为写死的示例（如具体邮箱）；同路径接口上若为 {{email}} 等占位，则用接口模板覆盖该字段。
+    已含 {{ 的 definition 字段保留（视为用户显式要用占位或嵌套引用）。
+    """
+    if ep_json is None:
+        return def_json
+    if isinstance(def_json, dict) and isinstance(ep_json, dict):
+        out = copy.deepcopy(def_json)
+        for k, dv in list(out.items()):
+            ev = ep_json.get(k)
+            if isinstance(dv, dict) and isinstance(ev, dict):
+                out[k] = merge_definition_json_with_endpoint_template(dv, ev)
+            elif isinstance(dv, str) and "{{" not in dv and isinstance(ev, str) and "{{" in ev:
+                out[k] = ev
+            elif isinstance(dv, list) and isinstance(ev, list) and dv and ev:
+                out[k] = [
+                    merge_definition_json_with_endpoint_template(a, b)
+                    for a, b in zip(dv, ev)
+                ] + [copy.deepcopy(x) for x in dv[len(ev) :]]
+        for k, ev in ep_json.items():
+            if k not in out:
+                out[k] = copy.deepcopy(ev)
+        return out
+    if isinstance(def_json, str) and "{{" not in def_json and isinstance(ep_json, str) and "{{" in ep_json:
+        return ep_json
+    return def_json
+
+
+def build_endpoint_template_route_map(endpoints: list[ApiEndpoint]) -> dict[str, Any]:
+    """key = \"METHOD:path\" -> 请求体 JSON 模板（dict/list）。"""
+    m: dict[str, Any] = {}
+    for ep in endpoints:
+        proto = (getattr(ep, "protocol", None) or "http").lower()
+        if proto not in ("http", "https"):
+            continue
+        method = str(getattr(ep, "method", None) or "GET").upper()
+        path = str(getattr(ep, "path", None) or "")
+        tpl = endpoint_request_json_template(ep)
+        if tpl is not None:
+            m[f"{method}:{path}"] = tpl
+    return m
+
+
+def _norm_json_key(key: str) -> str:
+    return str(key).strip().lower().replace("_", "")
+
+
+def _email_var_key_in_ctx(ctx: dict[str, str]) -> str | None:
+    for k in ("email", "userEmail", "loginEmail", "mail", "user_email"):
+        if k in ctx:
+            return k
+    return None
+
+
+def _password_var_key_in_ctx(ctx: dict[str, str]) -> str | None:
+    for k in ("rawPwd", "loginPwd", "password", "pwd", "login_pwd"):
+        if k in ctx:
+            return k
+    return None
+
+
+def json_body_env_literal_hints(obj: Any, ctx: dict[str, str]) -> Any:
+    """
+    集合/链式调试专用：definition 里常残留写死的邮箱、密码，而环境 variables 里已有同名键。
+    对「不含 {{」的字符串字段，按常见字段名改为占位符，再走 substitute_obj。
+    不在单接口调试中启用，避免覆盖用户故意填的临时值。
+    """
+    if isinstance(obj, dict):
+        return {k: _apply_hint_for_entry(k, v, ctx) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [json_body_env_literal_hints(x, ctx) for x in obj]
+    return obj
+
+
+def _apply_hint_for_entry(key: str, val: Any, ctx: dict[str, str]) -> Any:
+    if isinstance(val, dict):
+        return json_body_env_literal_hints(val, ctx)
+    if isinstance(val, list):
+        return [json_body_env_literal_hints(x, ctx) for x in val]
+    if not isinstance(val, str) or "{{" in val:
+        return val
+    nk = _norm_json_key(key)
+    ek = _email_var_key_in_ctx(ctx)
+    if nk in ("email", "mail", "useremail") and ek:
+        return f"{{{{{ek}}}}}"
+    if nk in ("username", "account", "user", "userid", "loginname") and "@" in val and ek:
+        return f"{{{{{ek}}}}}"
+    pk = _password_var_key_in_ctx(ctx)
+    if nk in ("password", "pwd", "loginpwd", "passwd", "userpwd") and pk:
+        return f"{{{{{pk}}}}}"
+    return val
 
 
 def filter_steps_for_mode(steps: list[dict[str, Any]], mode: str) -> list[dict[str, Any]]:
@@ -347,12 +491,13 @@ def execute_run(
     continue_on_failure = bool(definition.get("continueOnFailure", False))
 
     ctx: dict[str, str] = {}
-    ctx.update(_parse_env_variables(env.variables))
+    ctx.update(merged_environment_variables_dict(env))
     ctx.update({k: str(v) for k, v in run_variables.items()})
 
     run_started = time.monotonic()
     overall_ok = True
     failed_steps: list[str] = []
+    endpoint_tpl_map = build_endpoint_template_route_map(db.query(ApiEndpoint).all())
 
     with httpx.Client(follow_redirects=True) as client:
         for idx, step in enumerate(steps):
@@ -390,8 +535,18 @@ def execute_run(
                 return
 
             req = step.get("request") or {}
-            method = str(substitute_vars(str(req.get("method") or "GET"), ctx)).upper()
-            path = substitute_vars(str(req.get("path") or "/"), ctx)
+            method_raw = str(req.get("method") or "GET").upper()
+            path_raw = str(req.get("path") or "/")
+            tpl = endpoint_tpl_map.get(f"{method_raw}:{path_raw}")
+            merged_json = req.get("json")
+            if tpl is not None:
+                if merged_json is not None:
+                    merged_json = merge_definition_json_with_endpoint_template(merged_json, tpl)
+                else:
+                    merged_json = tpl
+
+            method = str(substitute_vars(method_raw, ctx)).upper()
+            path = substitute_vars(path_raw, ctx)
             url = build_url(env.baseUrl, path)
             if req.get("url"):
                 url = substitute_vars(str(req["url"]), ctx)
@@ -402,8 +557,9 @@ def execute_run(
             req_body_str = ""
             json_body = None
             content = None
-            if "json" in req and req["json"] is not None:
-                json_body = substitute_obj(req["json"], ctx)
+            if merged_json is not None:
+                hinted = json_body_env_literal_hints(copy.deepcopy(merged_json), ctx)
+                json_body = substitute_obj(hinted, ctx)
                 try:
                     req_body_str = json.dumps(json_body, ensure_ascii=False)
                 except TypeError:
@@ -546,11 +702,16 @@ def debug_http_request_core(
     ctx: dict[str, str],
     timeout: float = DEFAULT_STEP_TIMEOUT_S,
     assert_list: list[dict[str, Any]] | None = None,
+    use_env_literal_hints: bool = False,
+    reveal_request_body_plain: bool = False,
 ) -> tuple[dict[str, Any], Any | None, bool]:
     """
     执行单次调试请求。
     返回 (与 debug_http_request 相同结构的字典, 解析后的响应 JSON 或 None, 是否可继续链式：无传输错误且断言未明确失败)。
     """
+    if json_body is not None and use_env_literal_hints:
+        json_body = json_body_env_literal_hints(copy.deepcopy(json_body), ctx)
+
     logger.info(
         "[debug_http_request_core] BEFORE substitute: method=%s path=%s json_body=%s ctx_keys=%s",
         method, path,
@@ -663,7 +824,7 @@ def debug_http_request_core(
 
     step_ok = step_err is None and assertions_passed is not False
 
-    out = {
+    out: dict[str, Any] = {
         "requestMethod": method_u,
         "requestUrl": url,
         "requestHeadersMasked": mask_sensitive(
@@ -680,6 +841,8 @@ def debug_http_request_core(
         "assertionsPassed": assertions_passed,
         "assertionResults": assertion_results,
     }
+    if reveal_request_body_plain and req_body_str:
+        out["requestBodyPlain"] = _truncate(req_body_str)
     return out, body_json, step_ok
 
 
@@ -708,6 +871,7 @@ def debug_http_request(
         ctx=ctx,
         timeout=timeout,
         assert_list=assert_list,
+        reveal_request_body_plain=True,
     )
     return out
 
@@ -733,6 +897,7 @@ def debug_definition_steps(
     definition_steps: list[dict[str, Any]],
     default_timeout: float = DEFAULT_STEP_TIMEOUT_S,
     continue_on_failure: bool = False,
+    endpoint_template_by_route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     按集合 definition.steps 格式（request.method / request.path / request.json …）从上到下执行调试。
@@ -803,6 +968,13 @@ def debug_definition_steps(
         headers = headers_raw if isinstance(headers_raw, dict) else {}
 
         json_body = req.get("json")
+        tpl_key = f"{method}:{path}"
+        tpl = (endpoint_template_by_route or {}).get(tpl_key)
+        if tpl is not None:
+            if json_body is not None:
+                json_body = merge_definition_json_with_endpoint_template(json_body, tpl)
+            else:
+                json_body = tpl
         raw_body = req.get("body")
         if isinstance(raw_body, str):
             pass
@@ -833,6 +1005,7 @@ def debug_definition_steps(
             ctx=ctx,
             timeout=to,
             assert_list=assert_list,
+            use_env_literal_hints=True,
         )
 
         extracted: dict[str, str] = {}
@@ -975,6 +1148,7 @@ def debug_http_request_chain(
             ctx=ctx,
             timeout=to,
             assert_list=assert_list,
+            use_env_literal_hints=True,
         )
 
         extracted: dict[str, str] = {}

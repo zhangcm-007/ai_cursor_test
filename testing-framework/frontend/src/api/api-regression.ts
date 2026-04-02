@@ -4,10 +4,20 @@ export interface ApiEnvironment {
   id: string;
   name: string;
   baseUrl: string;
+  /** 手动维护的环境变量 JSON */
   variables: string;
+  /** 调试「自动提取到环境」写入的 JSON；与 variables 合并参与请求，同名时 variables 优先 */
+  autoExtractedVariables?: string;
   createdAt?: string;
   updatedAt?: string;
 }
+
+export type ApiEnvironmentUpdateBody = Partial<{
+  name: string;
+  baseUrl: string;
+  variables: string;
+  autoExtractedVariables: string;
+}>;
 
 export interface ApiCollection {
   id: string;
@@ -82,6 +92,8 @@ export interface ApiDebugResult {
   requestUrl: string;
   requestHeadersMasked: string;
   requestBodyMasked: string;
+  /** 单接口调试时后端附带：请求体原文（含 password 等），便于核对实际发送内容 */
+  requestBodyPlain?: string;
   statusCode: number | null;
   durationMs: number;
   responseHeaders: Record<string, string>;
@@ -109,9 +121,9 @@ export interface ApiDebugChainResult {
 export const apiRegressionApi = {
   environments: {
     list: () => api.get<ApiEnvironment[]>("/api-regression/environments").then((r) => r.data),
-    create: (body: { name: string; baseUrl: string; variables?: string }) =>
+    create: (body: { name: string; baseUrl: string; variables?: string; autoExtractedVariables?: string }) =>
       api.post("/api-regression/environments", body).then((r) => r.data),
-    update: (id: string, body: Partial<{ name: string; baseUrl: string; variables: string }>) =>
+    update: (id: string, body: ApiEnvironmentUpdateBody) =>
       api.put(`/api-regression/environments/${id}`, body).then((r) => r.data),
     delete: (id: string) => api.delete(`/api-regression/environments/${id}`).then((r) => r.data),
   },
@@ -174,6 +186,8 @@ export const apiRegressionApi = {
       runVariables?: Record<string, string>;
       timeout?: number;
       continueOnFailure?: boolean;
+      /** 默认 true：调试结束后把各步 extract 结果合并进环境 autoExtractedVariables */
+      persistExtractToEnv?: boolean;
     }) => api.post<ApiDebugChainResult>("/api-regression/debug/definition", body).then((r) => r.data),
     requestChain: (body: {
       environmentId?: string;

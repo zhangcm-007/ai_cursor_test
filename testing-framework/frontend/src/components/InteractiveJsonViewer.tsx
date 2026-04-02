@@ -64,7 +64,10 @@ function LeafActions({
   return (
     <span className="ij-actions" style={{ marginLeft: 6 }}>
       {onAddToEnv && (
-        <Tooltip title={`保存到环境变量: ${vn} = ${short}`} mouseEnterDelay={0.3}>
+        <Tooltip
+          title={`写入环境「自动提取」区（非手动变量列表）· 变量名 ${vn} · ${path} · 集合调试成功后也会按步骤 extract 更新；若环境里有同名「手动」键会覆盖自动值`}
+          mouseEnterDelay={0.3}
+        >
           <button
             style={{ ...btnBase, color: "#52c41a" }}
             onClick={(e) => {
@@ -87,7 +90,7 @@ function LeafActions({
         </Tooltip>
       )}
       {onAddAssertion && (
-        <Tooltip title={`添加断言: ${path} = ${short}`} mouseEnterDelay={0.3}>
+        <Tooltip title={`仅添加断言（不写环境变量）: ${path} = ${short}`} mouseEnterDelay={0.3}>
           <button
             style={{ ...btnBase, color: "#1890ff" }}
             onClick={(e) => {

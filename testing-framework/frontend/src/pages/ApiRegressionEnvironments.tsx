@@ -4,7 +4,12 @@ import { PlusOutlined, DeleteOutlined, EditOutlined, QuestionCircleOutlined } fr
 import { useState } from "react";
 import { apiRegressionApi, type ApiEnvironment } from "../api/api-regression";
 import { RunVariablesFieldList } from "../components/RunVariablesFieldList";
-import { varListToVariablesJson, variablesJsonToVarList, type RunVarFormRow } from "../utils/runVariablesForm";
+import {
+  varListToVariablesJson,
+  variablesJsonToVarList,
+  mergedEnvironmentVariablesRecord,
+  type RunVarFormRow,
+} from "../utils/runVariablesForm";
 
 const BUILTIN_PLACEHOLDERS = [
   { syntax: "{{$uuid}}", desc: "随机 UUID", example: "a1b2c3d4-e5f6-..." },
@@ -89,7 +94,7 @@ export default function ApiRegressionEnvironments() {
   const openCreate = () => {
     setEditing(null);
     form.resetFields();
-    form.setFieldsValue({ envVarList: [] });
+    form.setFieldsValue({ envVarList: [], envAutoVarList: [] });
     setOpen(true);
   };
 
@@ -99,6 +104,7 @@ export default function ApiRegressionEnvironments() {
       name: r.name,
       baseUrl: r.baseUrl,
       envVarList: variablesJsonToVarList(r.variables),
+      envAutoVarList: variablesJsonToVarList(r.autoExtractedVariables),
     });
     setOpen(true);
   };
@@ -115,8 +121,13 @@ export default function ApiRegressionEnvironments() {
   });
 
   const update = useMutation(
-    ({ id, body }: { id: string; body: { name: string; baseUrl: string; variables: string } }) =>
-      apiRegressionApi.environments.update(id, body),
+    ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: { name: string; baseUrl: string; variables: string; autoExtractedVariables: string };
+    }) => apiRegressionApi.environments.update(id, body),
     {
       onSuccess: () => {
         qc.invalidateQueries("api-envs");
@@ -142,9 +153,9 @@ export default function ApiRegressionEnvironments() {
         接口测试 · 环境
       </Typography.Title>
       <p className="page-desc">
-        每个环境有独立的 Base URL 与<strong>环境变量</strong>。同一环境下，所有接口调试、集合运行都会使用这些变量（如{" "}
+        每个环境有独立的 Base URL 与<strong>环境变量</strong>：下方分为<strong>手动维护</strong>与<strong>自动提取</strong>两块；合并后参与调试/运行（如{" "}
         <code>{"{{email}}"}</code>
-        ）；多个接口共用同一变量时在此配置一次即可。调试弹窗里的「运行变量」可覆盖同名键。
+        ），同名键以手动区为准。调试里「运行变量」仍可覆盖同名键。
       </p>
       <Space style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
@@ -161,14 +172,7 @@ export default function ApiRegressionEnvironments() {
           {
             title: "变量数",
             width: 88,
-            render: (_, r) => {
-              try {
-                const n = Object.keys(JSON.parse(r.variables || "{}") as Record<string, unknown>).length;
-                return n;
-              } catch {
-                return "—";
-              }
-            },
+            render: (_, r) => Object.keys(mergedEnvironmentVariablesRecord(r)).length,
           },
           {
             title: "操作",
@@ -198,17 +202,23 @@ export default function ApiRegressionEnvironments() {
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ envVarList: [] }}
+          initialValues={{ envVarList: [], envAutoVarList: [] }}
           onFinish={(v) => {
-            const parsed = varListToVariablesJson(v.envVarList as RunVarFormRow[] | undefined);
-            if (!parsed.ok) {
-              message.error(parsed.message);
+            const parsedManual = varListToVariablesJson(v.envVarList as RunVarFormRow[] | undefined);
+            const parsedAuto = varListToVariablesJson(v.envAutoVarList as RunVarFormRow[] | undefined);
+            if (!parsedManual.ok) {
+              message.error(parsedManual.message);
+              return;
+            }
+            if (!parsedAuto.ok) {
+              message.error(parsedAuto.message);
               return;
             }
             const payload = {
               name: v.name as string,
               baseUrl: v.baseUrl as string,
-              variables: parsed.json,
+              variables: parsedManual.json,
+              autoExtractedVariables: parsedAuto.json,
             };
             if (editing) {
               update.mutate({ id: editing.id, body: payload });
@@ -224,11 +234,17 @@ export default function ApiRegressionEnvironments() {
             <Input placeholder="https://test-api.example.com" />
           </Form.Item>
           <Form.Item
-            label="环境变量"
-            extra="与 Path / Header / Body 中的 {{name}} 对应；值可以是固定值，也可以用内置函数生成动态值。"
+            label="手动维护的变量"
+            extra="与 Path / Header / Body 中的 {{name}} 对应；值可以是固定值，也可以用内置函数生成动态值。同名键会覆盖「自动提取」区。"
           >
             <BuiltinPlaceholderHelp />
             <RunVariablesFieldList listName="envVarList" />
+          </Form.Item>
+          <Form.Item
+            label="自动提取的变量"
+            extra="由接口调试「自动提取到环境变量」写入；每次调试成功会按规则更新。可在此查看、删改；与手动区同名时以手动区为准。"
+          >
+            <RunVariablesFieldList listName="envAutoVarList" />
           </Form.Item>
         </Form>
       </Modal>

@@ -9,7 +9,8 @@ import {
   type ApiDebugChainResult,
   type ApiEndpoint,
 } from "../api/api-regression";
-import { mergeVariablesJsonWithRecord } from "../utils/runVariablesForm";
+import { getApiEnvironmentsFromCache, patchApiEnvironmentInCache } from "../utils/apiEnvsCache";
+import { mergeAutoExtractedVariablesJson } from "../utils/runVariablesForm";
 import {
   addAssertionsToDefinitionStep,
   findEndpointForStep,
@@ -20,6 +21,7 @@ import {
   removeStepFromDefinition,
   reorderStepsInDefinition,
   updateAssertionInDefinitionStep,
+  mergeStepExtractInDefinition,
   updateStepFieldInDefinition,
   updateStepNameInDefinition,
   type DefinitionStepAssertion,
@@ -161,6 +163,8 @@ export function CollectionStepsTable({
   environmentId,
   onSyncToEnv,
   syncLoading,
+  /** 集合详情页为 true：点绿钮写入 extract 后只改本地，需用户点「保存」才落库 */
+  definitionWritesRequireManualSave,
 }: {
   definitionRaw: string;
   endpoints: ApiEndpoint[];
@@ -170,6 +174,7 @@ export function CollectionStepsTable({
   environmentId?: string;
   onSyncToEnv?: (vars: Record<string, string>) => void;
   syncLoading?: boolean;
+  definitionWritesRequireManualSave?: boolean;
 }) {
   const canDrag = !!onDefinitionChange;
   const gridCols = canDrag
@@ -413,6 +418,7 @@ export function CollectionStepsTable({
                 stepAsserts={stepAsserts}
                 definitionRaw={definitionRaw}
                 onDefinitionChange={onDefinitionChange}
+                definitionWritesRequireManualSave={definitionWritesRequireManualSave}
                 environmentId={environmentId}
                 onSyncToEnv={onSyncToEnv}
                 syncLoading={syncLoading}
@@ -559,6 +565,7 @@ function StepExpandedContent({
   stepAsserts,
   definitionRaw,
   onDefinitionChange,
+  definitionWritesRequireManualSave,
   environmentId,
   onSyncToEnv,
   syncLoading,
@@ -570,6 +577,7 @@ function StepExpandedContent({
   stepAsserts: DefinitionStepAssertion[];
   definitionRaw: string;
   onDefinitionChange?: (s: string) => void;
+  definitionWritesRequireManualSave?: boolean;
   environmentId?: string;
   onSyncToEnv?: (vars: Record<string, string>) => void;
   syncLoading?: boolean;
@@ -722,9 +730,27 @@ function StepExpandedContent({
                 : undefined;
               return (
                 <div style={{ marginTop: 4 }}>
+                  <Typography.Text type="secondary" style={{ display: "block", marginBottom: 6, fontSize: 11 }}>
+                    绿色「上传」图标：写入环境「自动提取」变量并在本步骤记下 JSONPath；蓝色「+」仅添加断言，不会写环境。
+                  </Typography.Text>
                   <InteractiveJsonViewer
                     data={parsed}
-                    onAddToEnv={canAddEnv ? (varName, value) => onSyncToEnv!({ [varName]: value }) : undefined}
+                    onAddToEnv={
+                      canAddEnv
+                        ? (varName, value, path) => {
+                            onSyncToEnv!({ [varName]: value });
+                            if (onDefinitionChange && path) {
+                              const next = mergeStepExtractInDefinition(definitionRaw, stepIdx, varName, path);
+                              if (next !== definitionRaw) {
+                                onDefinitionChange(next);
+                                if (definitionWritesRequireManualSave) {
+                                  message.info("已将 JSONPath 写入本步骤 extract；请点击页面顶部「保存」持久化集合。");
+                                }
+                              }
+                            }
+                          }
+                        : undefined
+                    }
                     onAddAssertion={handleAddAssertion}
                   />
                 </div>
@@ -880,6 +906,7 @@ export function CollectionStepsExpandContent({
 
   const debugDefMut = useMutation(apiRegressionApi.debug.debugDefinition, {
     onSuccess: (r) => {
+      qc.invalidateQueries("api-envs");
       setDebugResult(r);
       if (r.ok) {
         message.success(`调试完成，共 ${r.steps.length} 步全部通过`);
@@ -901,25 +928,47 @@ export function CollectionStepsExpandContent({
   });
 
   const syncToEnvMut = useMutation(
-    ({ environmentId, variables }: { environmentId: string; variables: string }) =>
-      apiRegressionApi.environments.update(environmentId, { variables }),
+    ({
+      environmentId,
+      autoExtractedVariables,
+    }: {
+      environmentId: string;
+      autoExtractedVariables: string;
+    }) => apiRegressionApi.environments.update(environmentId, { autoExtractedVariables }),
     {
-      onSuccess: () => {
+      onSuccess: (resp, vars) => {
+        console.log("[syncToEnvMut] success, response=", resp);
+        patchApiEnvironmentInCache(qc, vars.environmentId, { autoExtractedVariables: vars.autoExtractedVariables });
         qc.invalidateQueries("api-envs");
-        message.success("提取变量已保存到环境");
+        message.destroy("sync-to-env");
+        message.success(
+          "已写入环境「自动提取的变量」区 ✓（去「环境」页编辑即可看到）"
+        );
       },
       onError: (e: { response?: { data?: { detail?: string } } }) => {
+        console.error("[syncToEnvMut] error=", e);
+        message.destroy("sync-to-env");
         message.error(e.response?.data?.detail ?? "保存到环境失败");
       },
     }
   );
 
   const handleSyncToEnv = (vars: Record<string, string>) => {
-    if (!debugEnvId) return;
-    const env = environments.find((e) => e.id === debugEnvId);
-    if (!env) return;
-    const merged = mergeVariablesJsonWithRecord(env.variables, vars);
-    syncToEnvMut.mutate({ environmentId: debugEnvId, variables: merged });
+    console.log("[handleSyncToEnv] called, debugEnvId=", debugEnvId, "vars=", vars);
+    if (!debugEnvId) {
+      message.warning("请先选择调试环境");
+      return;
+    }
+    const env = getApiEnvironmentsFromCache(qc, environments).find((e) => e.id === debugEnvId);
+    if (!env) {
+      message.error("环境不存在，请刷新后重试");
+      return;
+    }
+    console.log("[handleSyncToEnv] env.autoExtractedVariables=", env.autoExtractedVariables);
+    const merged = mergeAutoExtractedVariablesJson(env.autoExtractedVariables, vars);
+    console.log("[handleSyncToEnv] merged=", merged, "→ PUT env", env.name);
+    message.loading({ content: `正在写入环境「${env.name}」的自动提取区…`, key: "sync-to-env", duration: 10 });
+    syncToEnvMut.mutate({ environmentId: debugEnvId, autoExtractedVariables: merged });
   };
 
   const handleDebugRun = () => {
@@ -932,6 +981,7 @@ export function CollectionStepsExpandContent({
       environmentId: debugEnvId,
       definition: data?.definition ?? "{}",
       continueOnFailure: true,
+      persistExtractToEnv: true,
     });
   };
 

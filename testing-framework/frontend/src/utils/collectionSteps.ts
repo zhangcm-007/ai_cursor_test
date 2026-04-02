@@ -1,4 +1,6 @@
-import type { ApiEndpoint } from "../api/api-regression";
+import type { ApiEndpoint, ApiEnvironment } from "../api/api-regression";
+import { headersListToJsonString, type HeaderRow } from "../components/HeadersFieldList";
+import { buildDebugModalDefaults, mergeDebugDraftIntoDefaults } from "./debugDraft";
 
 export type ParsedCollectionStep = {
   jsonIndex: number;
@@ -54,6 +56,40 @@ export function updateStepFieldInDefinition(
     const s = steps[stepJsonIndex];
     if (s == null || typeof s !== "object") return definitionRaw;
     Object.assign(s, patch);
+    return JSON.stringify(d, null, 2);
+  } catch {
+    return definitionRaw;
+  }
+}
+
+/**
+ * 将「自动提取到环境」所用的 JSONPath 记入该步骤的 extract（与后端 jsonpath-ng 一致，如 $.data.verifyCode）。
+ * 下次执行集合调试时，后端会把 extract 结果同步到环境「自动提取」变量区。
+ */
+export function mergeStepExtractInDefinition(
+  definitionRaw: string,
+  stepJsonIndex: number,
+  varName: string,
+  jsonPath: string
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? d.steps : [];
+    if (stepJsonIndex < 0 || stepJsonIndex >= steps.length) return definitionRaw;
+    const s = steps[stepJsonIndex];
+    if (s == null || typeof s !== "object") return definitionRaw;
+    const row = s as Record<string, unknown>;
+    const prev = row.extract;
+    const ext: Record<string, string> = {};
+    if (prev && typeof prev === "object" && !Array.isArray(prev)) {
+      for (const [k, v] of Object.entries(prev as Record<string, unknown>)) {
+        ext[k] = typeof v === "string" ? v : String(v ?? "");
+      }
+    }
+    const k = varName.trim();
+    if (!k) return definitionRaw;
+    ext[k] = jsonPath;
+    row.extract = ext;
     return JSON.stringify(d, null, 2);
   } catch {
     return definitionRaw;
@@ -423,7 +459,8 @@ export type ChainDebugSeedRow = {
 
 export function buildChainDebugSeedFromDefinition(
   definitionRaw: string,
-  endpoints: ApiEndpoint[]
+  endpoints: ApiEndpoint[],
+  environments: ApiEnvironment[] = []
 ): ChainDebugSeedRow[] {
   if (!definitionRaw?.trim()) return [];
   try {
@@ -453,6 +490,21 @@ export function buildChainDebugSeedFromDefinition(
         extractJson = JSON.stringify(ext, null, 2);
       }
       const matched = findEndpointForStep({ method, path }, endpoints);
+      if (matched && environments.length > 0) {
+        const merged = mergeDebugDraftIntoDefaults(
+          buildDebugModalDefaults(matched, environments),
+          matched.debugDraft,
+          environments
+        );
+        const mb = String(merged.body ?? "").trim();
+        if (mb && !body.includes("{{")) {
+          body = mb;
+        }
+        const hl = merged.headerList as HeaderRow[] | undefined;
+        if (Array.isArray(hl) && hl.length > 0 && !headers.includes("{{")) {
+          headers = headersListToJsonString(hl);
+        }
+      }
       out.push({
         endpointId: matched?.id,
         method,

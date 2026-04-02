@@ -87,6 +87,8 @@ export function DebugChainModal({
   const [lastResult, setLastResult] = useState<ApiDebugChainResult | null>(null);
   const [form] = Form.useForm();
   const openedRef = useRef(false);
+  /** 已用「非空环境列表」做过一次 definition 预填（避免 env 晚到仍停留在写死示例） */
+  const appliedEnvMergeRef = useRef(false);
   const seedRef = useRef(seedFromCollection ?? null);
   seedRef.current = seedFromCollection ?? null;
 
@@ -96,6 +98,7 @@ export function DebugChainModal({
   useEffect(() => {
     if (!open) {
       openedRef.current = false;
+      appliedEnvMergeRef.current = false;
       return;
     }
 
@@ -104,31 +107,45 @@ export function DebugChainModal({
       chainTimeout: 30,
     });
 
+    const seed = seedRef.current;
+    const applySeeds = (envs: typeof environments) => {
+      if (!seed?.definitionRaw?.trim()) return false;
+      const seeds = buildChainDebugSeedFromDefinition(seed.definitionRaw, seed.endpoints, envs);
+      if (seeds.length > 0) {
+        setRows(
+          seeds.map((s, i) => ({
+            key: `seed-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
+            endpointId: s.endpointId,
+            method: s.method,
+            path: s.path,
+            headers: s.headers,
+            body: s.body,
+            extractJson: s.extractJson,
+          }))
+        );
+        return true;
+      }
+      setRows([newRow(), newRow()]);
+      message.info("当前 definition 中暂无 HTTP(S) 步骤，已使用空白链模板");
+      return true;
+    };
+
     if (!openedRef.current) {
       openedRef.current = true;
       setLastResult(null);
-      const seed = seedRef.current;
       if (seed?.definitionRaw?.trim()) {
-        const seeds = buildChainDebugSeedFromDefinition(seed.definitionRaw, seed.endpoints);
-        if (seeds.length > 0) {
-          setRows(
-            seeds.map((s, i) => ({
-              key: `seed-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 9)}`,
-              endpointId: s.endpointId,
-              method: s.method,
-              path: s.path,
-              headers: s.headers,
-              body: s.body,
-              extractJson: s.extractJson,
-            }))
-          );
-        } else {
-          setRows([newRow(), newRow()]);
-          message.info("当前 definition 中暂无 HTTP(S) 步骤，已使用空白链模板");
-        }
+        applySeeds(environments);
+        if (environments.length > 0) appliedEnvMergeRef.current = true;
       } else {
         setRows([newRow(), newRow()]);
       }
+    } else if (
+      seed?.definitionRaw?.trim() &&
+      environments.length > 0 &&
+      !appliedEnvMergeRef.current
+    ) {
+      appliedEnvMergeRef.current = true;
+      applySeeds(environments);
     }
 
     const envId = form.getFieldValue("environmentId");

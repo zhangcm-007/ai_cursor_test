@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.models import Requirement, TestCase
 from app.models_api import ApiCollection, ApiEndpoint, ApiEnvironment
 from app.services import llm_client
+from app.services.api_case_runner import merged_environment_variables_dict
 from app.util import new_id
 
 logger = logging.getLogger(__name__)
@@ -278,12 +279,9 @@ def generate_single_api_tests(
     if environment_id:
         env = db.query(ApiEnvironment).filter(ApiEnvironment.id == environment_id).first()
         if env:
-            try:
-                vars_dict = json.loads(env.variables or "{}")
-                if isinstance(vars_dict, dict) and vars_dict:
-                    env_info = f"\n\n## 环境变量（可用 {{{{变量名}}}} 引用）\n{json.dumps(vars_dict, ensure_ascii=False, indent=2)}"
-            except json.JSONDecodeError:
-                pass
+            vars_dict = merged_environment_variables_dict(env)
+            if vars_dict:
+                env_info = f"\n\n## 环境变量（可用 {{{{变量名}}}} 引用）\n{json.dumps(vars_dict, ensure_ascii=False, indent=2)}"
 
     req_id = new_id()
     req = Requirement(
@@ -486,12 +484,9 @@ def generate_chain_tests(
     if environment_id:
         env = db.query(ApiEnvironment).filter(ApiEnvironment.id == environment_id).first()
         if env:
-            try:
-                vars_dict = json.loads(env.variables or "{}")
-                if isinstance(vars_dict, dict) and vars_dict:
-                    env_info = f"\n\n## 环境变量\n{json.dumps(vars_dict, ensure_ascii=False, indent=2)}"
-            except json.JSONDecodeError:
-                pass
+            vars_dict = merged_environment_variables_dict(env)
+            if vars_dict:
+                env_info = f"\n\n## 环境变量\n{json.dumps(vars_dict, ensure_ascii=False, indent=2)}"
 
     chain_names = [c.get("name", "未命名链路") for c in chains[:5]]
     req_id = new_id()
