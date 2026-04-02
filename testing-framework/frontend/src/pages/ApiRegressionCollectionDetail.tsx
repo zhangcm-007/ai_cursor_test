@@ -204,8 +204,41 @@ export default function ApiRegressionCollectionDetail() {
     });
   };
 
+  /**
+   * 集合内「从清单生成步骤」「添加接口到集合」共用的下拉选项。
+   * - 列表主文案：优先显示接口名称（接口清单里维护的 name）；无名称时退回「METHOD path」，避免空白项。
+   * - 鼠标悬停：用原生 title 展示「METHOD path」，路径一目了然且不占用列表宽度。
+   * - 搜索：可按名称、Path、Method 过滤（与主文案是否含 path 无关）。
+   */
   const epOptions = useMemo(
-    () => endpoints.map((e) => ({ label: `${e.method} ${e.path}`, value: e.id })),
+    () =>
+      endpoints.map((e) => {
+        const methodPath = `${e.method} ${e.path}`;
+        const displayName = (e.name || "").trim() || methodPath;
+        return {
+          value: e.id,
+          label: (
+            <span title={methodPath}>{displayName}</span>
+          ),
+        };
+      }),
+    [endpoints]
+  );
+
+  /** 与 epOptions 配套：多选下拉按接口名称 / 路径 / 方法过滤 */
+  const filterEndpointSelectOption = useCallback(
+    (input: string, option: { value?: string } | undefined) => {
+      const id = option?.value;
+      if (!id) return false;
+      const ep = endpoints.find((x) => x.id === id);
+      if (!ep) return false;
+      const q = input.trim().toLowerCase();
+      if (!q) return true;
+      const name = (ep.name || "").toLowerCase();
+      const path = (ep.path || "").toLowerCase();
+      const method = (ep.method || "").toLowerCase();
+      return name.includes(q) || path.includes(q) || method.includes(q);
+    },
     [endpoints]
   );
 
@@ -337,10 +370,12 @@ export default function ApiRegressionCollectionDetail() {
         <Select
           mode="multiple"
           style={{ width: "100%" }}
-          placeholder="选择接口"
+          placeholder="选择接口（列表显示名称，悬停可看 Path）"
           options={epOptions}
           value={selectedEp}
           onChange={setSelectedEp}
+          showSearch
+          filterOption={filterEndpointSelectOption}
         />
       </Modal>
 
@@ -393,19 +428,18 @@ export default function ApiRegressionCollectionDetail() {
         okText="追加"
       >
         <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
-          选择接口后追加到集合步骤末尾（不影响已有步骤）。追加后需点击「保存」。
+          选择接口后追加到集合步骤末尾（不影响已有步骤）。追加后需点击「保存」。下拉列表以<strong>接口名称</strong>为主文案，鼠标悬停可看
+          <strong> Method + Path</strong>；可按名称、路径、方法搜索。
         </Typography.Paragraph>
         <Select
           mode="multiple"
           style={{ width: "100%" }}
-          placeholder="搜索并选择接口"
+          placeholder="按名称或路径搜索并选择接口"
           options={epOptions}
           value={addStepSelected}
           onChange={setAddStepSelected}
           showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? "").toLowerCase().includes(input.toLowerCase())
-          }
+          filterOption={filterEndpointSelectOption}
         />
       </Modal>
 

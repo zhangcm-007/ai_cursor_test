@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import random
 import re
 import time
@@ -131,10 +130,7 @@ def substitute_vars(text: str, ctx: dict[str, str]) -> str:
             if inner.endswith("Pwd"):
                 return _obfuscate_password(str(ctx[inner]))
             return str(ctx[inner])
-        if re.fullmatch(r"\w+", inner):
-            v = os.environ.get(inner)
-            if v is not None:
-                return v
+        # 不再回退 os.environ：避免本机进程环境里的同名变量（如 email）在 ctx 未注入时「顶替」环境配置，集合链式调试与单接口调试表现不一致。
         return m.group(0)
 
     pattern = re.compile(r"\{\{([^{}]+)\}\}")
