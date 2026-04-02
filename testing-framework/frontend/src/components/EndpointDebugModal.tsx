@@ -34,6 +34,7 @@ import {
   type ApiDebugResult,
   type ApiEndpoint,
   type ApiEnvironment,
+  type ApiEnvironmentUpdateBody,
 } from "../api/api-regression";
 import { DebugAssertionsFieldList } from "./DebugAssertionsFieldList";
 import { RunVariablesFieldList } from "./RunVariablesFieldList";
@@ -44,7 +45,14 @@ import {
   serializeAssertListForApi,
   type DebugAssertFormRow,
 } from "../utils/debugAssertions";
-import { mergeVariablesJsonWithRecord, runVarListToRecord, type RunVarFormRow } from "../utils/runVariablesForm";
+import { getApiEnvironmentsFromCache, patchApiEnvironmentInCache } from "../utils/apiEnvsCache";
+import {
+  mergeAutoExtractedVariablesJson,
+  mergeVariablesJsonWithRecord,
+  mergedEnvironmentVariablesRecord,
+  runVarListToRecord,
+  type RunVarFormRow,
+} from "../utils/runVariablesForm";
 import {
   buildDebugModalDefaults,
   debugFormValuesToDraftJson,
@@ -148,7 +156,10 @@ function ExtractToEnvRulesEditor({
   return (
     <div>
       {rules.map((rule, idx) => (
-        <Space key={idx} style={{ display: "flex", marginBottom: 6 }} size={6}>
+        <Space key={idx} style={{ display: "flex", marginBottom: 6, alignItems: "center" }} size={6} wrap>
+          <Tag color="cyan" style={{ fontSize: 11, margin: 0 }}>
+            随响应更新
+          </Tag>
           <Input
             size="small"
             placeholder="变量名，如 code"
@@ -286,12 +297,17 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     }
   };
 
-  const syncRunVarsToEnvironment = useMutation(
-    ({ environmentId, variables }: { environmentId: string; variables: string }) =>
-      apiRegressionApi.environments.update(environmentId, { variables }),
+  const syncEnvironmentPatchMut = useMutation(
+    ({
+      environmentId,
+      patch,
+    }: {
+      environmentId: string;
+      patch: Pick<ApiEnvironmentUpdateBody, "variables" | "autoExtractedVariables">;
+    }) => apiRegressionApi.environments.update(environmentId, patch),
     {
-      onSuccess: () => {
-        qc.invalidateQueries("api-environments");
+      onSuccess: (_data, variables) => {
+        patchApiEnvironmentInCache(qc, variables.environmentId, variables.patch);
         qc.invalidateQueries("api-envs");
       },
       onSettled: () => setSyncToEnvTarget(null),
@@ -316,16 +332,16 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     }
     if (!Object.keys(vars).length) return;
     const envId = debugForm.getFieldValue("environmentId") as string | undefined;
-    const freshEnvs = (qc.getQueryData("api-envs") as ApiEnvironment[] | undefined) ?? environments;
-    const env = envId ? freshEnvs.find((e) => e.id === envId) : undefined;
+    const env = envId ? getApiEnvironmentsFromCache(qc, environments).find((e) => e.id === envId) : undefined;
     if (!env) return;
-    const merged = mergeVariablesJsonWithRecord(env.variables, vars);
-    syncRunVarsToEnvironment.mutate(
-      { environmentId: env.id, variables: merged },
+    const merged = mergeAutoExtractedVariablesJson(env.autoExtractedVariables, vars);
+    syncEnvironmentPatchMut.mutate(
+      { environmentId: env.id, patch: { autoExtractedVariables: merged } },
       {
         onSuccess: () => {
-          qc.invalidateQueries("api-envs");
-          message.success(`自动提取 ${Object.keys(vars).join(", ")} 已更新到环境「${env.name}」`);
+          message.success(
+            `「自动提取到环境变量」已更新：${Object.keys(vars).join(", ")} → 环境「${env.name}」`
+          );
         },
       }
     );
@@ -364,7 +380,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
       message.warning("请先选择环境");
       return null;
     }
-    const env = environments.find((e) => e.id === envId);
+    const env = getApiEnvironmentsFromCache(qc, environments).find((e) => e.id === envId);
     if (!env) {
       message.error("环境不存在，请刷新后重试");
       return null;
@@ -394,11 +410,11 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     const patch = { [k]: String(row.varValue ?? "") };
     const merged = mergeVariablesJsonWithRecord(env.variables, patch);
     setSyncToEnvTarget(fieldIndex);
-    syncRunVarsToEnvironment.mutate(
-      { environmentId: envId, variables: merged },
+    syncEnvironmentPatchMut.mutate(
+      { environmentId: envId, patch: { variables: merged } },
       {
         onSuccess: () => {
-          message.success(`已将变量「${k}」合并到环境「${env.name}」（同名键已覆盖）`);
+          message.success(`已将变量「${k}」合并到环境「${env.name}」的手动区（同名键已覆盖）`);
         },
       }
     );
@@ -421,11 +437,11 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     const merged = mergeVariablesJsonWithRecord(env.variables, parsed.record);
     const n = Object.keys(parsed.record).length;
     setSyncToEnvTarget("all");
-    syncRunVarsToEnvironment.mutate(
-      { environmentId: envId, variables: merged },
+    syncEnvironmentPatchMut.mutate(
+      { environmentId: envId, patch: { variables: merged } },
       {
         onSuccess: () => {
-          message.success(`已将全部 ${n} 个运行变量合并到环境「${env.name}」（同名键已覆盖）`);
+          message.success(`已将全部 ${n} 个运行变量合并到环境「${env.name}」的手动区（同名键已覆盖）`);
         },
       }
     );
@@ -435,12 +451,9 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     const resolved = resolveDebugEnvironment();
     if (!resolved) return;
     const { env } = resolved;
-    let envVars: Record<string, unknown> = {};
-    try {
-      const o = JSON.parse((env.variables ?? "").trim() || "{}") as unknown;
-      if (o && typeof o === "object" && !Array.isArray(o)) envVars = o as Record<string, unknown>;
-    } catch { /* empty */ }
-    const keys = Object.keys(envVars);
+    const mergedRec = mergedEnvironmentVariablesRecord(env);
+    const keys = Object.keys(mergedRec);
+    const envVars: Record<string, unknown> = { ...mergedRec };
     if (!keys.length) {
       message.info(`环境「${env.name}」中没有变量可导入`);
       return;
@@ -450,7 +463,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     const toAdd: RunVarFormRow[] = [];
     for (const k of keys) {
       if (existingNames.has(k)) continue;
-      toAdd.push({ varName: k, varValue: String(envVars[k] ?? "") });
+      toAdd.push({ varName: k, varValue: String(envVars[k] ?? ""), source: "imported_env" });
     }
     if (!toAdd.length) {
       message.info("环境中的变量已全部存在于运行变量中");
@@ -470,10 +483,13 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     }
   }, [debugResult?.responseBody]);
 
+  const requestBodyForDisplay = (r: ApiDebugResult) =>
+    (r.requestBodyPlain ?? r.requestBodyMasked ?? "").trim();
+
   const debugResolvedRequestText = useMemo(() => {
     if (!debugResult) return "";
     const h = (debugResult.requestHeadersMasked ?? "").trim() || "（无）";
-    const b = (debugResult.requestBodyMasked ?? "").trim() || "（无）";
+    const b = requestBodyForDisplay(debugResult) || "（无）";
     return `${debugResult.requestMethod} ${debugResult.requestUrl}\n\n请求头:\n${h}\n\n请求体:\n${b}`;
   }, [debugResult]);
 
@@ -659,17 +675,18 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
             label="运行变量（可选）"
             extra={
               <>
-                与环境 variables 合并后用于 Path / Header / Body 中的 <code>{"{{name}}"}</code>；值中可直接写内置占位，如{" "}
-                <code>{"{{$randEmail|qq.com}}"}</code> 等，见 <code>docs/API_REGRESSION.md</code>。每行可「合并此项」；底部按钮可一次合并<strong>全部</strong>
-                有效行到所选环境的「环境变量」（同名键以运行变量为准）。
+                此处为<strong>本调试会话</strong>下手动填写、从环境导入或写内置占位（如 <code>{"{{$randEmail|qq.com}}"}</code>）的变量，<strong>不会</strong>随本接口响应自动改写。
+                需要每次调试成功后按响应 JSONPath 更新<strong>环境 variables</strong> 的，请用下方「自动提取到环境变量」或响应里绿色 <span style={{ color: "#52c41a" }}>↑</span>。
+                与 Path / Header / Body 中 <code>{"{{name}}"}</code> 合并时同名以运行变量优先；详见 <code>docs/API_REGRESSION.md</code>。
               </>
             }
           >
             <div>
               <RunVariablesFieldList
+                showSourceTags
                 onMergeRowToEnvironment={handleSyncOneRunVarToEnvironment}
                 mergeRowLoadingIndex={
-                  syncRunVarsToEnvironment.isLoading && typeof syncToEnvTarget === "number" ? syncToEnvTarget : null
+                  syncEnvironmentPatchMut.isLoading && typeof syncToEnvTarget === "number" ? syncToEnvTarget : null
                 }
               />
               <Space style={{ width: "100%", marginTop: 10 }}>
@@ -683,7 +700,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                 <Button
                   style={{ flex: 1 }}
                   icon={<CloudUploadOutlined />}
-                  loading={syncRunVarsToEnvironment.isLoading && syncToEnvTarget === "all"}
+                  loading={syncEnvironmentPatchMut.isLoading && syncToEnvTarget === "all"}
                   onClick={handleSyncRunVarsToEnvironment}
                 >
                   全部合并到环境
@@ -704,9 +721,8 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
             label="自动提取到环境变量"
             extra={
               <>
-                每次调试成功后，自动从响应体提取指定路径的值并保存到所选环境变量。
-                也可在下方响应体中点击字段旁的 <span style={{ color: "#52c41a" }}>↑</span> 按钮快速添加。
-                点「保存调试」可持久化这些规则。
+                与上方「运行变量」不同：这里配置的规则会在<strong>每次调试成功</strong>后，把响应 JSON 中对应路径的值写入<strong>所选环境的 variables</strong>（随接口返回更新）。
+                也可在下方响应体中点击字段旁绿色 <span style={{ color: "#52c41a" }}>↑</span> 快速添加规则。点「保存调试」可持久化到本接口草稿。
               </>
             }
           >
@@ -783,7 +799,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                 wordBreak: "break-word",
               }}
             >
-              {(debugResult.requestBodyMasked ?? "").trim() || "（无）"}
+              {requestBodyForDisplay(debugResult) || "（无）"}
             </pre>
             <Typography.Title level={5}>响应</Typography.Title>
             {debugResult.assertionsPassed != null && (
@@ -879,7 +895,8 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                   <>
                     <Typography.Text type="secondary" style={{ display: "block", marginTop: 6, marginBottom: 6, fontSize: 12 }}>
                       点字段旁
-                      <span style={{ color: "#52c41a" }}> ↑ </span>立即保存到环境变量并建立自动提取规则（下次调试自动更新），
+                      <span style={{ color: "#52c41a" }}> ↑ </span>
+                      <strong>自动提取到环境变量</strong>（写入环境「自动提取」区并记下 JSONPath，每次调试成功后按最新响应更新；非上方「运行变量」），
                       <span style={{ color: "#1890ff" }}> + </span>添加到断言。
                     </Typography.Text>
                     <InteractiveJsonViewer
@@ -888,13 +905,14 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                         const resolved = resolveDebugEnvironment();
                         if (!resolved) return;
                         const { envId, env } = resolved;
-                        const merged = mergeVariablesJsonWithRecord(env.variables, { [varName]: value });
-                        syncRunVarsToEnvironment.mutate(
-                          { environmentId: envId, variables: merged },
+                        const merged = mergeAutoExtractedVariablesJson(env.autoExtractedVariables, { [varName]: value });
+                        syncEnvironmentPatchMut.mutate(
+                          { environmentId: envId, patch: { autoExtractedVariables: merged } },
                           {
                             onSuccess: () => {
-                              qc.invalidateQueries("api-envs");
-                              message.success(`已保存 ${varName}=${value.length > 20 ? value.slice(0, 20) + "…" : value} 到环境「${env.name}」，后续调试将自动更新`);
+                              message.success(
+                                `已「自动提取到环境变量」：${varName} 已写入环境「${env.name}」，并将随每次调试成功按 JSONPath 更新`
+                              );
                             },
                           }
                         );
@@ -994,9 +1012,9 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                   const resolved = resolveDebugEnvironment();
                   if (!resolved) return;
                   const { envId, env } = resolved;
-                  const merged = mergeVariablesJsonWithRecord(env.variables, vars);
-                  syncRunVarsToEnvironment.mutate(
-                    { environmentId: envId, variables: merged },
+                  const merged = mergeAutoExtractedVariablesJson(env.autoExtractedVariables, vars);
+                  syncEnvironmentPatchMut.mutate(
+                    { environmentId: envId, patch: { autoExtractedVariables: merged } },
                     {
                       onSuccess: () => {
                         const keys = Object.keys(vars).join(", ");
@@ -1005,7 +1023,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                     }
                   );
                 }}
-                loading={syncRunVarsToEnvironment.isLoading}
+                loading={syncEnvironmentPatchMut.isLoading}
               />
             ) : null}
           </div>

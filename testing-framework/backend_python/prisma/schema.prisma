@@ -48,12 +48,14 @@ model TestCase {
 }
 
 model ApiEnvironment {
-  id        String   @id @default(cuid())
-  name      String
-  baseUrl   String
-  variables String   @default("{}")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                      String   @id @default(cuid())
+  name                    String
+  baseUrl                 String
+  variables               String   @default("{}")
+  /// 调试「自动提取到环境」写入的键值；与 variables 合并参与请求，同名时 variables（手动）优先
+  autoExtractedVariables  String   @default("{}")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
   runs      ApiRun[]
   schedules ApiRegressionSchedule[]
 }

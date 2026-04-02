@@ -30,7 +30,8 @@ import {
 import { RunVariablesFieldList } from "../components/RunVariablesFieldList";
 import { CollectionStepsTable } from "../components/CollectionStepsTable";
 import { EndpointDebugModal } from "../components/EndpointDebugModal";
-import { mergeVariablesJsonWithRecord, runVarListToRecord, type RunVarFormRow } from "../utils/runVariablesForm";
+import { getApiEnvironmentsFromCache, patchApiEnvironmentInCache } from "../utils/apiEnvsCache";
+import { mergeAutoExtractedVariablesJson, runVarListToRecord, type RunVarFormRow } from "../utils/runVariablesForm";
 import { appendStepsToDefinition } from "../utils/collectionSteps";
 
 
@@ -131,6 +132,7 @@ export default function ApiRegressionCollectionDetail() {
 
   const debugDefMut = useMutation(apiRegressionApi.debug.debugDefinition, {
     onSuccess: (r) => {
+      qc.invalidateQueries("api-envs");
       setDebugResult(r);
       if (r.ok) {
         message.success(`调试完成，共 ${r.steps.length} 步全部通过`);
@@ -152,14 +154,24 @@ export default function ApiRegressionCollectionDetail() {
   });
 
   const syncToEnvMut = useMutation(
-    ({ environmentId, variables }: { environmentId: string; variables: string }) =>
-      apiRegressionApi.environments.update(environmentId, { variables }),
+    ({
+      environmentId,
+      autoExtractedVariables,
+    }: {
+      environmentId: string;
+      autoExtractedVariables: string;
+    }) => apiRegressionApi.environments.update(environmentId, { autoExtractedVariables }),
     {
-      onSuccess: () => {
+      onSuccess: (resp, vars) => {
+        console.log("[detail/syncToEnvMut] success, response=", resp);
+        patchApiEnvironmentInCache(qc, vars.environmentId, { autoExtractedVariables: vars.autoExtractedVariables });
         qc.invalidateQueries("api-envs");
-        message.success("提取变量已保存到环境");
+        message.destroy("sync-to-env");
+        message.success("已写入环境「自动提取的变量」区 ✓（去「环境」页编辑即可看到）");
       },
       onError: (e: { response?: { data?: { detail?: string } } }) => {
+        console.error("[detail/syncToEnvMut] error=", e);
+        message.destroy("sync-to-env");
         message.error(e.response?.data?.detail ?? "保存到环境失败");
       },
     }
@@ -184,11 +196,21 @@ export default function ApiRegressionCollectionDetail() {
   );
 
   const handleSyncToEnv = (vars: Record<string, string>) => {
-    if (!debugEnvId) return;
-    const env = envs.find((e) => e.id === debugEnvId);
-    if (!env) return;
-    const merged = mergeVariablesJsonWithRecord(env.variables, vars);
-    syncToEnvMut.mutate({ environmentId: debugEnvId, variables: merged });
+    console.log("[detail/handleSyncToEnv] called, debugEnvId=", debugEnvId, "vars=", vars);
+    if (!debugEnvId) {
+      message.warning("请先选择调试环境");
+      return;
+    }
+    const env = getApiEnvironmentsFromCache(qc, envs).find((e) => e.id === debugEnvId);
+    if (!env) {
+      message.error("环境不存在，请刷新后重试");
+      return;
+    }
+    console.log("[detail/handleSyncToEnv] env.autoExtractedVariables=", env.autoExtractedVariables);
+    const merged = mergeAutoExtractedVariablesJson(env.autoExtractedVariables, vars);
+    console.log("[detail/handleSyncToEnv] merged=", merged, "→ PUT env", env.name);
+    message.loading({ content: `正在写入环境「${env.name}」的自动提取区…`, key: "sync-to-env", duration: 10 });
+    syncToEnvMut.mutate({ environmentId: debugEnvId, autoExtractedVariables: merged });
   };
 
   const handleDebugRun = () => {
@@ -201,6 +223,7 @@ export default function ApiRegressionCollectionDetail() {
       environmentId: debugEnvId,
       definition: defText,
       continueOnFailure: true,
+      persistExtractToEnv: true,
     });
   };
 
@@ -310,6 +333,7 @@ export default function ApiRegressionCollectionDetail() {
           definitionRaw={defText}
           endpoints={endpoints}
           onDefinitionChange={setDefText}
+          definitionWritesRequireManualSave
           onDebugEndpoint={(ep) => {
             setDebugEp(ep);
             setDebugOpen(true);

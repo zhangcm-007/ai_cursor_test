@@ -25,11 +25,12 @@ from app.models_api import (
 )
 from app.services.api_case_runner import (
     DEFAULT_STEP_TIMEOUT_S,
-    _parse_env_variables,
+    build_endpoint_template_route_map,
     debug_definition_steps,
     debug_http_request,
     debug_http_request_chain,
     execute_run,
+    merged_environment_variables_dict,
     validate_definition,
 )
 from app.services.api_testcase_generator import (
@@ -86,20 +87,65 @@ def _serialize_run(r: ApiRun, db: Session) -> dict[str, Any]:
 # --- Environments ---
 
 
+def _env_json_field(body: dict, key: str, default_obj: dict | None = None) -> str:
+    default_obj = default_obj if default_obj is not None else {}
+    v = body.get(key)
+    if v is None:
+        return json.dumps(default_obj, ensure_ascii=False)
+    if isinstance(v, str):
+        return v
+    return json.dumps(v, ensure_ascii=False)
+
+
+def _merge_dict_into_env_json_field(existing: str | None, patch: dict[str, str]) -> str:
+    """将 patch 合并进环境 JSON 字符串字段（非法 JSON 则视为空对象）。"""
+    try:
+        cur = json.loads(existing or "{}")
+    except json.JSONDecodeError:
+        cur = {}
+    if not isinstance(cur, dict):
+        cur = {}
+    cur.update(patch)
+    return json.dumps(cur, ensure_ascii=False)
+
+
+def _persist_debug_extracted_to_auto_env(db: Session, env: ApiEnvironment, result: dict[str, Any]) -> None:
+    """集合调试完成后，把各步 extract 得到的键值写入环境 autoExtractedVariables（与前端绿钮行为一致）。"""
+    steps = result.get("steps") or []
+    patch: dict[str, str] = {}
+    for s in steps:
+        if not isinstance(s, dict):
+            continue
+        ex = s.get("extracted")
+        if not isinstance(ex, dict):
+            continue
+        for k, v in ex.items():
+            patch[str(k)] = str(v) if v is not None else ""
+    if not patch:
+        return
+    merged = _merge_dict_into_env_json_field(getattr(env, "autoExtractedVariables", None), patch)
+    env.autoExtractedVariables = merged
+    env.updatedAt = utc_naive_now()
+    db.commit()
+    db.refresh(env)
+
+
+def _serialize_environment(e: ApiEnvironment) -> dict[str, Any]:
+    return {
+        "id": e.id,
+        "name": e.name,
+        "baseUrl": e.baseUrl,
+        "variables": e.variables,
+        "autoExtractedVariables": getattr(e, "autoExtractedVariables", None) or "{}",
+        "createdAt": e.createdAt,
+        "updatedAt": e.updatedAt,
+    }
+
+
 @router.get("/environments")
 def list_environments(db: Session = Depends(get_db)):
     rows = db.query(ApiEnvironment).order_by(ApiEnvironment.updatedAt.desc()).all()
-    return [
-        {
-            "id": e.id,
-            "name": e.name,
-            "baseUrl": e.baseUrl,
-            "variables": e.variables,
-            "createdAt": e.createdAt,
-            "updatedAt": e.updatedAt,
-        }
-        for e in rows
-    ]
+    return [_serialize_environment(e) for e in rows]
 
 
 @router.post("/environments")
@@ -112,12 +158,13 @@ def create_environment(body: dict, db: Session = Depends(get_db)):
         id=new_id(),
         name=name,
         baseUrl=base_url,
-        variables=body.get("variables") if isinstance(body.get("variables"), str) else json.dumps(body.get("variables") or {}, ensure_ascii=False),
+        variables=_env_json_field(body, "variables", {}),
+        autoExtractedVariables=_env_json_field(body, "autoExtractedVariables", {}),
     )
     db.add(e)
     db.commit()
     db.refresh(e)
-    return {"id": e.id, "name": e.name, "baseUrl": e.baseUrl, "variables": e.variables}
+    return {k: v for k, v in _serialize_environment(e).items() if k not in ("createdAt", "updatedAt")}
 
 
 @router.get("/environments/{eid}")
@@ -125,14 +172,7 @@ def get_environment(eid: str, db: Session = Depends(get_db)):
     e = db.query(ApiEnvironment).filter(ApiEnvironment.id == eid).first()
     if not e:
         raise HTTPException(404, detail="Not found")
-    return {
-        "id": e.id,
-        "name": e.name,
-        "baseUrl": e.baseUrl,
-        "variables": e.variables,
-        "createdAt": e.createdAt,
-        "updatedAt": e.updatedAt,
-    }
+    return _serialize_environment(e)
 
 
 @router.put("/environments/{eid}")
@@ -145,11 +185,13 @@ def update_environment(eid: str, body: dict, db: Session = Depends(get_db)):
     if "baseUrl" in body:
         e.baseUrl = body["baseUrl"]
     if "variables" in body:
-        e.variables = body["variables"] if isinstance(body["variables"], str) else json.dumps(body["variables"], ensure_ascii=False)
+        e.variables = _env_json_field(body, "variables", {})
+    if "autoExtractedVariables" in body:
+        e.autoExtractedVariables = _env_json_field(body, "autoExtractedVariables", {})
     e.updatedAt = utc_naive_now()
     db.commit()
     db.refresh(e)
-    return {"id": e.id, "name": e.name, "baseUrl": e.baseUrl, "variables": e.variables}
+    return {k: v for k, v in _serialize_environment(e).items() if k not in ("createdAt", "updatedAt")}
 
 
 @router.delete("/environments/{eid}")
@@ -375,7 +417,7 @@ def api_debug_request(body: dict, db: Session = Depends(get_db)):
         if not env:
             raise HTTPException(404, detail="环境不存在")
         base_url = (env.baseUrl or "").strip()
-        ctx.update(_parse_env_variables(env.variables))
+        ctx.update(merged_environment_variables_dict(env))
     if not base_url:
         raise HTTPException(400, detail="请选择环境或填写 baseUrl")
 
@@ -444,13 +486,17 @@ def api_debug_definition(body: dict, db: Session = Depends(get_db)):
         raise HTTPException(400, detail="环境 baseUrl 为空")
 
     logger.info("[debug/definition] env_id=%s env_name=%s base_url=%s", env_id, env.name, base_url)
-    logger.info("[debug/definition] env.variables(raw, first 2000 chars)=%s", (env.variables or "")[:2000])
+    logger.info("[debug/definition] env.variables(manual, first 1200 chars)=%s", (env.variables or "")[:1200])
+    logger.info(
+        "[debug/definition] env.autoExtractedVariables(first 1200 chars)=%s",
+        (getattr(env, "autoExtractedVariables", None) or "")[:1200],
+    )
 
     ctx: dict[str, str] = {}
-    env_vars = _parse_env_variables(env.variables)
+    env_vars = merged_environment_variables_dict(env)
     ctx.update(env_vars)
-    logger.info("[debug/definition] parsed env_vars keys=%s", sorted(env_vars.keys()))
-    logger.info("[debug/definition] parsed env_vars=%s", {k: (v[:80] + "..." if len(v) > 80 else v) for k, v in env_vars.items()})
+    logger.info("[debug/definition] merged env ctx keys=%s", sorted(env_vars.keys()))
+    logger.info("[debug/definition] merged env ctx=%s", {k: (v[:80] + "..." if len(v) > 80 else v) for k, v in env_vars.items()})
 
     run_vars = body.get("runVariables")
     if isinstance(run_vars, dict):
@@ -500,13 +546,22 @@ def api_debug_definition(body: dict, db: Session = Depends(get_db)):
 
     cof = bool(body.get("continueOnFailure", definition.get("continueOnFailure", False)))
 
-    return debug_definition_steps(
+    route_map = build_endpoint_template_route_map(db.query(ApiEndpoint).all())
+    result = debug_definition_steps(
         base_url=base_url,
         initial_ctx=ctx,
         definition_steps=steps,
         default_timeout=default_to,
         continue_on_failure=cof,
+        endpoint_template_by_route=route_map,
     )
+    # 默认：调试结束后把本趟各步 extract 结果同步到环境「自动提取」区，便于验证码等随每次调试更新
+    if body.get("persistExtractToEnv", True) is not False:
+        try:
+            _persist_debug_extracted_to_auto_env(db, env, result)
+        except Exception:
+            logger.exception("persistExtractToEnv: failed to merge extracted into env.autoExtractedVariables")
+    return result
 
 
 @router.post("/debug/request-chain")
@@ -521,7 +576,7 @@ def api_debug_request_chain(body: dict, db: Session = Depends(get_db)):
         if not env:
             raise HTTPException(404, detail="环境不存在")
         base_url = (env.baseUrl or "").strip()
-        ctx.update(_parse_env_variables(env.variables))
+        ctx.update(merged_environment_variables_dict(env))
     if not base_url:
         raise HTTPException(400, detail="请选择环境或填写 baseUrl")
 

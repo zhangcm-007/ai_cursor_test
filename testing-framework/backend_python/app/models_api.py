@@ -19,6 +19,7 @@ class ApiEnvironment(Base):
     name: Mapped[str] = mapped_column(String)
     baseUrl: Mapped[str] = mapped_column("baseUrl", String)
     variables: Mapped[str] = mapped_column(String, default="{}")
+    autoExtractedVariables: Mapped[str] = mapped_column("autoExtractedVariables", String, default="{}")
     createdAt: Mapped[datetime] = mapped_column(
         "createdAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now
     )

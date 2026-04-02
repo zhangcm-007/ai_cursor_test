@@ -1,8 +1,11 @@
+/** 运行变量行来源（与「自动提取到环境」区分：后者写入环境 autoExtractedVariables，或由集合步骤 extract 在调试结束后同步） */
+export type RunVarRowSource = "manual" | "imported_env";
+
 /** 运行变量表格行（用于 Form.List，避免字段名 `name` 与列表索引冲突） */
-export type RunVarFormRow = { varName: string; varValue: string };
+export type RunVarFormRow = { varName: string; varValue: string; source?: RunVarRowSource };
 
 export function emptyRunVarRow(): RunVarFormRow {
-  return { varName: "", varValue: "" };
+  return { varName: "", varValue: "", source: "manual" };
 }
 
 /**
@@ -69,4 +72,38 @@ export function mergeVariablesJsonWithRecord(
     base = {};
   }
   return JSON.stringify({ ...base, ...patch }, null, 2);
+}
+
+/** 解析环境 JSON 为扁平 Record（非法则 {}） */
+function parseVariablesObject(raw: string | undefined): Record<string, string> {
+  try {
+    const o = JSON.parse((raw ?? "").trim() || "{}") as unknown;
+    if (!o || typeof o !== "object" || Array.isArray(o)) return {};
+    return Object.fromEntries(
+      Object.entries(o as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])
+    );
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 手动 variables 与 autoExtractedVariables 合并后的键值（用于导入运行变量、展示数量等）。
+ * 同名键以手动 variables 为准。
+ */
+export function mergedEnvironmentVariablesRecord(env: {
+  variables: string;
+  autoExtractedVariables?: string;
+}): Record<string, string> {
+  const auto = parseVariablesObject(env.autoExtractedVariables);
+  const man = parseVariablesObject(env.variables);
+  return { ...auto, ...man };
+}
+
+/** 仅合并「自动提取」分区（调试自动写环境时用） */
+export function mergeAutoExtractedVariablesJson(
+  existingAutoJson: string | undefined,
+  patch: Record<string, string>
+): string {
+  return mergeVariablesJsonWithRecord(existingAutoJson ?? "{}", patch);
 }
