@@ -186,7 +186,9 @@ export default function ApiRegressionCollectionDetail() {
         if (r.updated > 0) {
           message.success(`已从接口调试配置同步 ${r.updated}/${r.total} 个步骤的请求参数`);
         } else {
-          message.info("所有步骤均无匹配的调试草稿，未做更新");
+          message.info(
+            "未更新：请确认步骤已带接口 id（重新「从清单生成」或「添加接口」），且对应接口在清单里保存过调试草稿"
+          );
         }
       },
       onError: (e: { response?: { data?: { detail?: string } } }) => {
@@ -437,6 +439,7 @@ export default function ApiRegressionCollectionDetail() {
               }
               return {
                 name: ep!.name || `${ep!.method} ${ep!.path}`,
+                endpointId: ep!.id,
                 method: ep!.method,
                 path: ep!.path,
                 protocol: ep!.protocol || "http",

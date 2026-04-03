@@ -164,7 +164,16 @@ export function removeStepFromDefinition(
 /** 向 definition.steps 末尾追加新步骤，返回新 definition 字符串 */
 export function appendStepsToDefinition(
   definitionRaw: string,
-  newSteps: Array<{ name: string; method: string; path: string; protocol?: string; headers?: Record<string, unknown>; json?: unknown }>
+  newSteps: Array<{
+    name: string;
+    method: string;
+    path: string;
+    protocol?: string;
+    /** 接口清单 id，供「同步接口调试配置」按主键匹配草稿 */
+    endpointId?: string;
+    headers?: Record<string, unknown>;
+    json?: unknown;
+  }>
 ): string {
   try {
     const d = JSON.parse(definitionRaw || "{}") as Record<string, unknown>;
@@ -173,6 +182,7 @@ export function appendStepsToDefinition(
       const step: Record<string, unknown> = {
         name: s.name || `${s.method} ${s.path}`,
         protocol: s.protocol || "http",
+        ...(s.endpointId ? { endpointId: s.endpointId } : {}),
         request: {
           method: s.method,
           path: s.path,
@@ -489,7 +499,11 @@ export function buildChainDebugSeedFromDefinition(
       if (ext && typeof ext === "object" && !Array.isArray(ext)) {
         extractJson = JSON.stringify(ext, null, 2);
       }
-      const matched = findEndpointForStep({ method, path }, endpoints);
+      // 与同步草稿一致：有 endpointId 时按主键找接口，避免同 path 多条记录时误用他人草稿
+      const rawEid = row.endpointId;
+      const eid =
+        typeof rawEid === "string" ? rawEid.trim() : rawEid != null ? String(rawEid).trim() : "";
+      const matched = eid ? endpoints.find((e) => e.id === eid) : findEndpointForStep({ method, path }, endpoints);
       if (matched && environments.length > 0) {
         const merged = mergeDebugDraftIntoDefaults(
           buildDebugModalDefaults(matched, environments),
@@ -506,7 +520,7 @@ export function buildChainDebugSeedFromDefinition(
         }
       }
       out.push({
-        endpointId: matched?.id,
+        endpointId: eid || matched?.id,
         method,
         path,
         headers,

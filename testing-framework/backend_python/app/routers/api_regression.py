@@ -630,6 +630,8 @@ def generate_from_endpoints(cid: str, body: dict, db: Session = Depends(get_db))
         if (ep.protocol or "http").lower() not in ("http", "https"):
             continue
         step: dict[str, Any] = {
+            # 与「同步接口调试配置」一致：用接口主键关联草稿，避免同 path 多接口时互相覆盖
+            "endpointId": ep.id,
             "name": ep.name or f"{ep.method} {ep.path}",
             "protocol": "http",
             "priority": "P1",
@@ -708,7 +710,11 @@ def generate_from_endpoints(cid: str, body: dict, db: Session = Depends(get_db))
 
 @router.post("/collections/{cid}/sync-steps-from-drafts")
 def sync_steps_from_drafts(cid: str, db: Session = Depends(get_db)):
-    """将集合中每个步骤的 request body/headers/extract 从对应接口的 debugDraft 同步更新。"""
+    """将集合中每个步骤的 request body/headers/extract 从对应接口的 debugDraft 同步更新。
+
+    匹配规则：仅按步骤上的 endpointId（接口清单主键）查找草稿；不再用 method+path，避免同路径多接口串数据。
+    无 endpointId 的步骤会跳过（旧数据需重新「从清单生成」或「添加接口」以写入 id）。
+    """
     c = db.query(ApiCollection).filter(ApiCollection.id == cid).first()
     if not c:
         raise HTTPException(404, detail="集合不存在")
@@ -718,13 +724,21 @@ def sync_steps_from_drafts(cid: str, db: Session = Depends(get_db)):
         raise HTTPException(400, detail="集合 definition JSON 无效")
     steps = list(definition.get("steps") or [])
     if not steps:
-        return {"definition": c.definition, "updated": 0}
+        return {"definition": c.definition, "updated": 0, "total": 0}
 
-    all_eps = db.query(ApiEndpoint).all()
-    ep_map: dict[str, ApiEndpoint] = {}
-    for ep in all_eps:
-        key = f"{(ep.method or 'GET').upper()}:{ep.path or ''}"
-        ep_map[key] = ep
+    # 一次性按 id 拉取本批步骤涉及的接口，避免逐步查询
+    eid_set: set[str] = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        raw = step.get("endpointId")
+        eid = str(raw).strip() if raw is not None else ""
+        if eid:
+            eid_set.add(eid)
+    ep_by_id: dict[str, ApiEndpoint] = {}
+    if eid_set:
+        for ep in db.query(ApiEndpoint).filter(ApiEndpoint.id.in_(eid_set)).all():
+            ep_by_id[ep.id] = ep
 
     updated_count = 0
     for step in steps:
@@ -733,12 +747,16 @@ def sync_steps_from_drafts(cid: str, db: Session = Depends(get_db)):
         req = step.get("request")
         if not isinstance(req, dict):
             continue
-        method = str(req.get("method") or "GET").upper()
-        path = str(req.get("path") or "")
-        key = f"{method}:{path}"
-        ep = ep_map.get(key)
+        raw_eid = step.get("endpointId")
+        eid = str(raw_eid).strip() if raw_eid is not None else ""
+        if not eid:
+            continue
+        ep = ep_by_id.get(eid)
         if not ep or not ep.debugDraft:
             continue
+
+        method = str(req.get("method") or "GET").upper()
+        path = str(req.get("path") or "")
 
         try:
             draft = json.loads(ep.debugDraft)
