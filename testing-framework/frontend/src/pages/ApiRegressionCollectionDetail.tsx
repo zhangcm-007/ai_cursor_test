@@ -17,7 +17,6 @@ import {
   ThunderboltOutlined,
   BugOutlined,
   SyncOutlined,
-  PlusOutlined,
 } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
@@ -30,9 +29,9 @@ import {
 import { RunVariablesFieldList } from "../components/RunVariablesFieldList";
 import { CollectionStepsTable } from "../components/CollectionStepsTable";
 import { EndpointDebugModal } from "../components/EndpointDebugModal";
+import { getSingleStepDefinition } from "../utils/collectionSteps";
 import { getApiEnvironmentsFromCache, patchApiEnvironmentInCache } from "../utils/apiEnvsCache";
 import { mergeAutoExtractedVariablesJson, runVarListToRecord, type RunVarFormRow } from "../utils/runVariablesForm";
-import { appendStepsToDefinition } from "../utils/collectionSteps";
 
 
 export default function ApiRegressionCollectionDetail() {
@@ -50,8 +49,6 @@ export default function ApiRegressionCollectionDetail() {
   const [runForm] = Form.useForm();
   const [debugEnvId, setDebugEnvId] = useState<string | undefined>();
   const [debugResult, setDebugResult] = useState<ApiDebugChainResult | null>(null);
-  const [addStepOpen, setAddStepOpen] = useState(false);
-  const [addStepSelected, setAddStepSelected] = useState<string[]>([]);
 
   const savedSnapshot = useRef({ name: "", desc: "", defText: "{}" });
   const isDirty = useCallback(() => {
@@ -69,6 +66,14 @@ export default function ApiRegressionCollectionDetail() {
         setDesc(c.description || "");
         setDefText(c.definition || "{}");
         savedSnapshot.current = { name: c.name, desc: c.description || "", defText: c.definition || "{}" };
+        if (c.lastDebugResult && !debugResult) {
+          try {
+            const parsed = JSON.parse(c.lastDebugResult);
+            if (parsed && typeof parsed === "object" && Array.isArray(parsed.steps)) {
+              setDebugResult(parsed);
+            }
+          } catch { /* ignore */ }
+        }
       },
     }
   );
@@ -177,6 +182,28 @@ export default function ApiRegressionCollectionDetail() {
     }
   );
 
+  const autoSaveDefinition = useMutation(
+    (definition: string) =>
+      apiRegressionApi.collections.update(id!, { definition }),
+    {
+      onSuccess: (_resp, definition) => {
+        savedSnapshot.current = { ...savedSnapshot.current, defText: definition };
+      },
+      onError: (e: { response?: { data?: { detail?: string } } }) => {
+        message.error(e.response?.data?.detail ?? "自动保存失败");
+        qc.invalidateQueries(["api-collection", id]);
+      },
+    }
+  );
+
+  const handleDefinitionChange = useCallback(
+    (next: string) => {
+      setDefText(next);
+      autoSaveDefinition.mutate(next);
+    },
+    [autoSaveDefinition],
+  );
+
   const syncDraftsMut = useMutation(
     () => apiRegressionApi.collections.syncStepsFromDrafts(id!),
     {
@@ -224,10 +251,30 @@ export default function ApiRegressionCollectionDetail() {
     debugDefMut.mutate({
       environmentId: debugEnvId,
       definition: defText,
+      collectionId: id,
       continueOnFailure: true,
       persistExtractToEnv: true,
     });
   };
+
+  const handleRunSingleStep = useCallback(async (stepJsonIndex: number) => {
+    if (!debugEnvId) {
+      message.warning("请先选择调试环境");
+      throw new Error("no env");
+    }
+    const miniDef = getSingleStepDefinition(defText, stepJsonIndex);
+    if (!miniDef) {
+      message.error("无法提取该步骤信息");
+      throw new Error("bad step");
+    }
+    return apiRegressionApi.debug.debugDefinition({
+      environmentId: debugEnvId,
+      definition: miniDef,
+      collectionId: id,
+      continueOnFailure: false,
+      persistExtractToEnv: false,
+    });
+  }, [debugEnvId, defText, id]);
 
   /**
    * 集合内「从清单生成步骤」「添加接口到集合」共用的下拉选项。
@@ -300,9 +347,6 @@ export default function ApiRegressionCollectionDetail() {
         >
           {dirty ? "保存 *" : "保存"}
         </Button>
-        <Button icon={<PlusOutlined />} onClick={() => { setAddStepSelected([]); setAddStepOpen(true); }}>
-          添加接口
-        </Button>
         <Button icon={<ThunderboltOutlined />} onClick={() => setGenOpen(true)}>
           从接口清单生成
         </Button>
@@ -367,12 +411,12 @@ export default function ApiRegressionCollectionDetail() {
         <CollectionStepsTable
           definitionRaw={defText}
           endpoints={endpoints}
-          onDefinitionChange={setDefText}
-          definitionWritesRequireManualSave
+          onDefinitionChange={handleDefinitionChange}
           onDebugEndpoint={(ep) => {
             setDebugEp(ep);
             setDebugOpen(true);
           }}
+          onRunSingleStep={debugEnvId ? handleRunSingleStep : undefined}
           debugResult={debugResult}
           environmentId={debugEnvId}
           onSyncToEnv={handleSyncToEnv}
@@ -400,71 +444,6 @@ export default function ApiRegressionCollectionDetail() {
           options={epOptions}
           value={selectedEp}
           onChange={setSelectedEp}
-          showSearch
-          filterOption={filterEndpointSelectOption}
-        />
-      </Modal>
-
-      <Modal
-        title="添加接口到集合"
-        open={addStepOpen}
-        onCancel={() => setAddStepOpen(false)}
-        onOk={() => {
-          if (!addStepSelected.length) {
-            message.warning("请选择要添加的接口");
-            return;
-          }
-          const stepsToAdd = addStepSelected
-            .map((epId) => endpoints.find((e) => e.id === epId))
-            .filter(Boolean)
-            .map((ep) => {
-              let headers: Record<string, unknown> = {};
-              let json: unknown = undefined;
-              if (ep!.debugDraft) {
-                try {
-                  const draft = JSON.parse(ep!.debugDraft);
-                  if (draft.headers) {
-                    if (typeof draft.headers === "string") {
-                      try { headers = JSON.parse(draft.headers); } catch { /* ignore */ }
-                    } else if (typeof draft.headers === "object") {
-                      headers = draft.headers;
-                    }
-                  }
-                  if (draft.body !== undefined && typeof draft.body === "string" && draft.body.trim()) {
-                    try { json = JSON.parse(draft.body); } catch { json = draft.body; }
-                  }
-                } catch { /* ignore */ }
-              } else if (ep!.sampleRequest) {
-                try { json = JSON.parse(ep!.sampleRequest); } catch { /* ignore */ }
-              }
-              return {
-                name: ep!.name || `${ep!.method} ${ep!.path}`,
-                endpointId: ep!.id,
-                method: ep!.method,
-                path: ep!.path,
-                protocol: ep!.protocol || "http",
-                headers,
-                json,
-              };
-            });
-          const next = appendStepsToDefinition(defText, stepsToAdd);
-          setDefText(next);
-          setAddStepOpen(false);
-          message.success(`已追加 ${stepsToAdd.length} 个接口到集合末尾，请点「保存」持久化`);
-        }}
-        okText="追加"
-      >
-        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
-          选择接口后追加到集合步骤末尾（不影响已有步骤）。追加后需点击「保存」。下拉列表以<strong>接口名称</strong>为主文案，鼠标悬停可看
-          <strong> Method + Path</strong>；可按名称、路径、方法搜索。
-        </Typography.Paragraph>
-        <Select
-          mode="multiple"
-          style={{ width: "100%" }}
-          placeholder="按名称或路径搜索并选择接口"
-          options={epOptions}
-          value={addStepSelected}
-          onChange={setAddStepSelected}
           showSearch
           filterOption={filterEndpointSelectOption}
         />

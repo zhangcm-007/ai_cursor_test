@@ -21,6 +21,7 @@ const BUILTIN_PLACEHOLDERS = [
   { syntax: "{{$randEmail|manji|}}", desc: "固定前缀，默认域名", example: "manji382715@example.com" },
   { syntax: "{{$randEmail||qq.com}}", desc: "默认前缀，固定域名", example: "test382715@qq.com" },
   { syntax: "{{$randEmail|manji|qq.com}}", desc: "固定前缀 + 固定域名", example: "manji382715@qq.com" },
+  { syntax: "{{$randPick|值1|值2|值3}}", desc: "从自定义列表随机取一个值", example: "值1 或 值2 或 值3" },
   { syntax: "{{$encPwd|明文密码}}", desc: "AiWealth 密码混淆（显式传入）", example: "2pSO2UDNzITMhFEQ6llJ" },
   { syntax: "{{rawPwd}}", desc: "变量名以 Pwd 结尾 → 引用时自动加密", example: "rawPwd=Aa123456 → 加密值" },
 ];

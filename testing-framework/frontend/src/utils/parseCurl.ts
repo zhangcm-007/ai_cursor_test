@@ -65,7 +65,7 @@ function findClosingCaretQuote(s: string, innerStart: number): number {
 export function normalizeWindowsCurlCmd(raw: string): string {
   let s = normalizeWindowsCmdLineContinuations(raw.trim());
 
-  const dataFlags = ["--data-raw", "--data-binary", "--data", "-d"] as const;
+  const dataFlags = ["--data-urlencode", "--data-raw", "--data-binary", "--data", "-d"] as const;
   for (const flag of dataFlags) {
     const escaped = flag.replace(/-/g, "\\-");
     const re = new RegExp(`${escaped}\\s+\\^"`, "i");
@@ -174,7 +174,7 @@ function expandGluedFlagTokens(tokens: string[]): string[] {
 
   const splitData = (t: string): [string, string] | null => {
     const tl = t.toLowerCase();
-    const prefixes = ["--data-raw", "--data-binary", "--data", "-d"] as const;
+    const prefixes = ["--data-urlencode", "--data-raw", "--data-binary", "--data", "-d"] as const;
     for (const prefix of prefixes) {
       if (tl !== prefix && !tl.startsWith(prefix)) continue;
       if (tl === prefix) return null;
@@ -276,6 +276,7 @@ const NO_ARG_FLAGS = new Set([
   "--compressed",
   "-g",
   "--globoff",
+  "--get",
 ]);
 
 const ONE_ARG_FLAGS = new Set([
@@ -287,6 +288,7 @@ const ONE_ARG_FLAGS = new Set([
   "--data",
   "--data-raw",
   "--data-binary",
+  "--data-urlencode",
   "-b",
   "--cookie",
   "-u",
@@ -300,13 +302,46 @@ function looksLikeUrl(t: string): boolean {
   return /^https?:\/\//i.test(t) || (t.startsWith("/") && t.length > 1);
 }
 
-function urlToPath(full: string): string {
+function urlToPathAndQuery(full: string): { pathname: string; queryParams: Record<string, string> } {
   try {
     const u = new URL(full);
-    return (u.pathname || "/") + u.search;
+    const queryParams: Record<string, string> = {};
+    u.searchParams.forEach((v, k) => {
+      queryParams[k] = v;
+    });
+    return { pathname: u.pathname || "/", queryParams };
   } catch {
-    return full.startsWith("/") ? full : `/${full}`;
+    const qIdx = full.indexOf("?");
+    if (qIdx >= 0) {
+      const pathname = full.slice(0, qIdx) || "/";
+      const queryParams: Record<string, string> = {};
+      try {
+        new URLSearchParams(full.slice(qIdx + 1)).forEach((v, k) => {
+          queryParams[k] = v;
+        });
+      } catch { /* ignore */ }
+      return { pathname: pathname.startsWith("/") ? pathname : `/${pathname}`, queryParams };
+    }
+    const p = full.startsWith("/") ? full : `/${full}`;
+    return { pathname: p, queryParams: {} };
   }
+}
+
+/**
+ * 从带 query string 的路径中提取参数，返回解码后的 Record 和干净路径。
+ * 供调试表单等外部模块在已有 path 含 `?key=%E4%B8%AD%E6%96%87` 时自动解码使用。
+ */
+export function splitPathAndQueryParams(path: string): { pathname: string; queryParams: Record<string, string> } {
+  const qIdx = path.indexOf("?");
+  if (qIdx < 0) return { pathname: path, queryParams: {} };
+  const pathname = path.slice(0, qIdx) || "/";
+  const queryParams: Record<string, string> = {};
+  try {
+    new URLSearchParams(path.slice(qIdx + 1)).forEach((v, k) => {
+      queryParams[k] = v;
+    });
+  } catch { /* ignore */ }
+  return { pathname, queryParams };
 }
 
 /**
@@ -348,15 +383,25 @@ export function parseCurlCommand(raw: string): ParsedCurl {
   if (tokens[0].toLowerCase() === "curl") i++;
 
   let method = "GET";
+  let explicitMethod = false;
   const headers: Record<string, string> = {};
   let body: string | null = null;
   let url: string | null = null;
+  let useGet = false;
+  const urlEncodeParams: string[] = [];
 
   while (i < tokens.length) {
     const t = tokens[i];
     const tl = t.toLowerCase();
 
+    if (t === "-G") {
+      useGet = true;
+      i++;
+      continue;
+    }
+
     if (NO_ARG_FLAGS.has(tl)) {
+      if (tl === "--get") useGet = true;
       i++;
       continue;
     }
@@ -369,6 +414,7 @@ export function parseCurlCommand(raw: string): ParsedCurl {
       i++;
       if (flag === "-x" || flag === "--request") {
         method = val.toUpperCase();
+        explicitMethod = true;
       } else if (flag === "--url") {
         url = val;
       } else if (flag === "-h" || flag === "--header") {
@@ -381,6 +427,8 @@ export function parseCurlCommand(raw: string): ParsedCurl {
           const name = val.slice(0, -1).trim();
           if (name) headers[name] = "";
         }
+      } else if (flag === "--data-urlencode") {
+        urlEncodeParams.push(val);
       } else if (
         flag === "-d" ||
         flag === "--data" ||
@@ -408,10 +456,43 @@ export function parseCurlCommand(raw: string): ParsedCurl {
 
   if (!url) throw new Error("未识别到 URL（需以 http(s):// 开头或为 path）");
 
-  const path = urlToPath(url);
+  // 解析 URL，分离 pathname 和已有的 query params（自动 URL 解码为可读中文）
+  const { pathname: path, queryParams: urlQueryParams } = urlToPathAndQuery(url);
 
-  if (method === "GET" && body !== null && body !== "") {
+  // 收集所有 query/body 参数到一个对象
+  const allParams: Record<string, string> = { ...urlQueryParams };
+
+  // --data-urlencode → 合入参数对象
+  for (const p of urlEncodeParams) {
+    const eq = p.indexOf("=");
+    if (eq >= 0) {
+      allParams[p.slice(0, eq)] = p.slice(eq + 1);
+    } else {
+      allParams[p] = "";
+    }
+  }
+
+  // --get/-G 时把 -d body 拆为 query 参数
+  if (useGet && body !== null) {
+    try {
+      new URLSearchParams(body).forEach((v, k) => {
+        allParams[k] = v;
+      });
+    } catch { /* keep body as-is below */ }
+    body = null;
+  }
+
+  // 有 query 参数时以可读 JSON 作为 sampleRequest
+  if (Object.keys(allParams).length > 0) {
+    const jsonBody = JSON.stringify(allParams, null, 2);
+    body = body === null ? jsonBody : body;
+  }
+
+  if (!explicitMethod && !useGet && body !== null && body !== "") {
     method = "POST";
+  }
+  if (useGet && !explicitMethod) {
+    method = "GET";
   }
 
   const sampleRequest = formatSampleBody(body);

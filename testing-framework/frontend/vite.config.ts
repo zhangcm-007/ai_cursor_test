@@ -8,7 +8,7 @@ export default defineConfig({
     port: Number(process.env.VITE_DEV_PORT) || 5173,
     strictPort: !!process.env.VITE_DEV_PORT,
     proxy: {
-      "/api": { target: "http://127.0.0.1:8000", changeOrigin: true },
+      "/api": { target: "http://127.0.0.1:8001", changeOrigin: true },
     },
   },
 });

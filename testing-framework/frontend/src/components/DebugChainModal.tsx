@@ -22,6 +22,7 @@ import { RunVariablesFieldList } from "./RunVariablesFieldList";
 import { runVarListToRecord, type RunVarFormRow } from "../utils/runVariablesForm";
 import { buildDebugModalDefaults, mergeDebugDraftIntoDefaults } from "../utils/debugDraft";
 import { buildChainDebugSeedFromDefinition } from "../utils/collectionSteps";
+import { looksLikeHtml, HtmlResponseViewer } from "./ResponseBodyViewer";
 
 const { TextArea } = Input;
 
@@ -566,20 +567,24 @@ export function DebugChainModal({
                     </div>
                   ) : null}
                   <Typography.Text type="secondary">响应体</Typography.Text>
-                  <pre
-                    style={{
-                      marginTop: 4,
-                      maxHeight: 200,
-                      overflow: "auto",
-                      background: "rgba(0,0,0,0.25)",
-                      padding: 8,
-                      borderRadius: 6,
-                      whiteSpace: "pre-wrap",
-                      wordBreak: "break-word",
-                    }}
-                  >
-                    {st.responseBody || "（无响应体）"}
-                  </pre>
+                  {st.responseBody && looksLikeHtml(st.responseBody) ? (
+                    <HtmlResponseViewer html={st.responseBody} maxHeight={200} />
+                  ) : (
+                    <pre
+                      style={{
+                        marginTop: 4,
+                        maxHeight: 200,
+                        overflow: "auto",
+                        background: "rgba(0,0,0,0.25)",
+                        padding: 8,
+                        borderRadius: 6,
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {st.responseBody || "（无响应体）"}
+                    </pre>
+                  )}
                 </div>
               ),
             }))}

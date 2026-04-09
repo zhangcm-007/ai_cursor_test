@@ -24,6 +24,7 @@ export interface ApiCollection {
   name: string;
   description: string;
   definition?: string;
+  lastDebugResult?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -40,6 +41,8 @@ export interface ApiEndpoint {
   sampleHeaders?: string;
   /** 调试弹窗「保存」后的表单快照 JSON；未保存则每次从 sample 推导 */
   debugDraft?: string;
+  /** 接口文档：参数说明、响应结构、业务规则等自由文本 */
+  apiDoc?: string;
 }
 
 export interface ApiRunSummary {
@@ -159,6 +162,7 @@ export const apiRegressionApi = {
           | "sampleRequest"
           | "sampleHeaders"
           | "debugDraft"
+          | "apiDoc"
         >
       >
     ) => api.put(`/api-regression/endpoints/${id}`, body).then((r) => r.data),
@@ -183,6 +187,7 @@ export const apiRegressionApi = {
     debugDefinition: (body: {
       environmentId: string;
       definition: string;
+      collectionId?: string;
       runVariables?: Record<string, string>;
       timeout?: number;
       continueOnFailure?: boolean;
@@ -234,32 +239,18 @@ export const apiRegressionApi = {
     delete: (id: string) => api.delete(`/api-regression/schedules/${id}`).then((r) => r.data),
   },
   generate: {
-    startSingleApiTests: (body: { endpointIds: string[]; environmentId?: string }) =>
+    startSingleApiTests: (body: { endpointIds: string[]; environmentId?: string; globalPrompt?: string }) =>
       api.post<{ jobId: string }>("/api-regression/generate-api-tests", body).then((r) => r.data),
-    analyzeDependencies: (body: { endpointIds: string[] }) =>
-      api.post<{ chains: DependencyChain[] }>("/api-regression/analyze-dependencies", body).then((r) => r.data),
-    startChainTests: (body: { chains: DependencyChain[]; endpointIds: string[]; environmentId?: string }) =>
-      api.post<{ jobId: string }>("/api-regression/generate-chain-tests", body).then((r) => r.data),
     status: (jobId: string) =>
       api.get<GenJobStatus>(`/api-regression/generate-api-tests/status/${jobId}`).then((r) => r.data),
   },
+  explore: {
+    start: (body: { endpointId: string; environmentId: string; userPrompt?: string; maxRounds?: number }) =>
+      api.post<{ jobId: string }>("/api-regression/explore-api-tests", body).then((r) => r.data),
+    progress: (jobId: string) =>
+      api.get<ExploreJobStatus>(`/api-regression/explore-api-tests/progress/${jobId}`).then((r) => r.data),
+  },
 };
-
-export interface DependencyChainStep {
-  endpointId: string;
-  endpointName?: string;
-  method?: string;
-  path?: string;
-  name: string;
-  extract?: Record<string, string>;
-  dependsOnVars?: string[];
-}
-
-export interface DependencyChain {
-  name: string;
-  description: string;
-  steps: DependencyChainStep[];
-}
 
 export interface GenJobResult {
   collections: { id: string; name: string; stepCount: number }[];
@@ -269,6 +260,32 @@ export interface GenJobResult {
 
 export interface GenJobStatus {
   status: "pending" | "running" | "completed" | "failed";
+  result?: GenJobResult;
+  error?: string;
+}
+
+export interface ExploreStepProgress {
+  name: string;
+  category: string;
+  method: string;
+  path: string;
+  statusCode: number | null;
+  durationMs: number;
+  assertionCount: number;
+  reason: string;
+  requestUrl: string;
+  requestJson: unknown;
+  responseBodyPreview: string;
+  assertions: Array<{ type: string; [key: string]: unknown }>;
+}
+
+export interface ExploreJobStatus {
+  status: "pending" | "running" | "completed" | "failed";
+  progress?: {
+    currentRound: number;
+    maxRounds: number;
+    steps: ExploreStepProgress[];
+  };
   result?: GenJobResult;
   error?: string;
 }

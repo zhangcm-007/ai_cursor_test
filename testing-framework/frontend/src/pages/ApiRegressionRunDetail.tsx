@@ -3,6 +3,7 @@ import { Button, Card, Collapse, Descriptions, Space, Table, Tag, Typography, me
 import { DownloadOutlined } from "@ant-design/icons";
 import { useParams, Link } from "react-router-dom";
 import { apiRegressionApi } from "../api/api-regression";
+import { looksLikeHtml, HtmlResponseViewer } from "../components/ResponseBodyViewer";
 
 export default function ApiRegressionRunDetail() {
   const { id } = useParams<{ id: string }>();
@@ -97,9 +98,13 @@ export default function ApiRegressionRunDetail() {
                 <Typography.Text strong style={{ display: "block", marginTop: 8 }}>
                   响应（脱敏截断）
                 </Typography.Text>
-                <pre style={{ whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 240, overflow: "auto" }}>
-                  {s.responseBodyMasked || ""}
-                </pre>
+                {s.responseBodyMasked && looksLikeHtml(s.responseBodyMasked) ? (
+                  <HtmlResponseViewer html={s.responseBodyMasked} maxHeight={240} />
+                ) : (
+                  <pre style={{ whiteSpace: "pre-wrap", fontSize: 11, maxHeight: 240, overflow: "auto" }}>
+                    {s.responseBodyMasked || ""}
+                  </pre>
+                )}
               </div>
             ),
           }))}

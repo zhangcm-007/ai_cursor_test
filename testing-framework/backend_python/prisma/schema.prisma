@@ -61,14 +61,15 @@ model ApiEnvironment {
 }
 
 model ApiCollection {
-  id          String   @id @default(cuid())
-  name        String
-  description String   @default("")
-  definition  String   @default("{}")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  runs        ApiRun[]
-  schedules   ApiRegressionSchedule[]
+  id               String   @id @default(cuid())
+  name             String
+  description      String   @default("")
+  definition       String   @default("{}")
+  lastDebugResult  String   @default("")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  runs             ApiRun[]
+  schedules        ApiRegressionSchedule[]
 }
 
 model ApiRegressionSchedule {
@@ -96,6 +97,8 @@ model ApiEndpoint {
   sampleHeaders  String   @default("")
   /// 调试弹窗保存的快照 JSON；未保存则每次从 sample 推导
   debugDraft     String   @default("{}")
+  /// 接口文档：参数说明、响应结构、业务规则等自由文本
+  apiDoc         String   @default("")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }

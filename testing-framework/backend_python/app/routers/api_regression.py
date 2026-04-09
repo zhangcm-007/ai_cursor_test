@@ -25,6 +25,7 @@ from app.models_api import (
 )
 from app.services.api_case_runner import (
     DEFAULT_STEP_TIMEOUT_S,
+    build_endpoint_headers_route_map,
     build_endpoint_template_route_map,
     debug_definition_steps,
     debug_http_request,
@@ -34,10 +35,9 @@ from app.services.api_case_runner import (
     validate_definition,
 )
 from app.services.api_testcase_generator import (
-    analyze_dependencies,
-    generate_chain_tests,
     generate_single_api_tests,
 )
+from app.services.api_explore_agent import explore_api_tests
 from app.util import new_id
 
 router = APIRouter(prefix="/api-regression", tags=["api-regression"])
@@ -209,7 +209,7 @@ def delete_environment(eid: str, db: Session = Depends(get_db)):
 
 @router.get("/collections")
 def list_collections(db: Session = Depends(get_db)):
-    rows = db.query(ApiCollection).order_by(ApiCollection.updatedAt.desc()).all()
+    rows = db.query(ApiCollection).order_by(ApiCollection.createdAt.desc()).all()
     return [
         {
             "id": c.id,
@@ -259,6 +259,7 @@ def get_collection(cid: str, db: Session = Depends(get_db)):
         "name": c.name,
         "description": c.description,
         "definition": c.definition,
+        "lastDebugResult": c.lastDebugResult,
         "createdAt": c.createdAt,
         "updatedAt": c.updatedAt,
     }
@@ -304,7 +305,7 @@ def delete_collection(cid: str, db: Session = Depends(get_db)):
 
 @router.get("/endpoints")
 def list_endpoints(db: Session = Depends(get_db)):
-    rows = db.query(ApiEndpoint).order_by(ApiEndpoint.updatedAt.desc()).all()
+    rows = db.query(ApiEndpoint).order_by(ApiEndpoint.createdAt.desc()).all()
     return [
         {
             "id": e.id,
@@ -316,6 +317,7 @@ def list_endpoints(db: Session = Depends(get_db)):
             "sampleRequest": e.sampleRequest,
             "sampleHeaders": e.sampleHeaders,
             "debugDraft": e.debugDraft or "{}",
+            "apiDoc": e.apiDoc or "",
             "createdAt": e.createdAt,
             "updatedAt": e.updatedAt,
         }
@@ -339,6 +341,7 @@ def create_endpoint(body: dict, db: Session = Depends(get_db)):
         sampleRequest=body.get("sampleRequest") if isinstance(body.get("sampleRequest"), str) else json.dumps(body.get("sampleRequest") or "", ensure_ascii=False),
         sampleHeaders=str(body.get("sampleHeaders") or ""),
         debugDraft=(str(body.get("debugDraft")) if isinstance(body.get("debugDraft"), str) else "{}") or "{}",
+        apiDoc=str(body.get("apiDoc") or ""),
     )
     db.add(e)
     db.commit()
@@ -372,6 +375,8 @@ def update_endpoint(eid: str, body: dict, db: Session = Depends(get_db)):
     if "debugDraft" in body:
         dd = body.get("debugDraft")
         e.debugDraft = dd if isinstance(dd, str) else json.dumps(dd or {}, ensure_ascii=False)
+    if "apiDoc" in body:
+        e.apiDoc = str(body.get("apiDoc") or "")
     e.updatedAt = utc_naive_now()
     db.commit()
     db.refresh(e)
@@ -546,7 +551,9 @@ def api_debug_definition(body: dict, db: Session = Depends(get_db)):
 
     cof = bool(body.get("continueOnFailure", definition.get("continueOnFailure", False)))
 
-    route_map = build_endpoint_template_route_map(db.query(ApiEndpoint).all())
+    all_eps = db.query(ApiEndpoint).all()
+    route_map = build_endpoint_template_route_map(all_eps)
+    headers_map = build_endpoint_headers_route_map(all_eps)
     result = debug_definition_steps(
         base_url=base_url,
         initial_ctx=ctx,
@@ -554,13 +561,37 @@ def api_debug_definition(body: dict, db: Session = Depends(get_db)):
         default_timeout=default_to,
         continue_on_failure=cof,
         endpoint_template_by_route=route_map,
+        endpoint_headers_by_route=headers_map,
     )
-    # 默认：调试结束后把本趟各步 extract 结果同步到环境「自动提取」区，便于验证码等随每次调试更新
+    # 调试结束后把本趟各步 extract 结果同步到环境「自动提取」区
     if body.get("persistExtractToEnv", True) is not False:
+        all_extracted = {}
+        for s in (result.get("steps") or []):
+            if isinstance(s, dict):
+                all_extracted.update(s.get("extracted") or {})
+        logger.info("[debug/definition] extracted to persist: %s", all_extracted)
+        if all_extracted:
+            try:
+                _persist_debug_extracted_to_auto_env(db, env, result)
+                logger.info("[debug/definition] persisted extracted to env.autoExtractedVariables OK")
+            except Exception:
+                logger.exception("persistExtractToEnv: failed to merge extracted into env.autoExtractedVariables")
+        else:
+            logger.info("[debug/definition] no extracted vars to persist (check step extract rules)")
+
+    # 持久化最近一次调试结果到集合
+    collection_id = body.get("collectionId")
+    if collection_id:
         try:
-            _persist_debug_extracted_to_auto_env(db, env, result)
+            col = db.query(ApiCollection).filter(ApiCollection.id == collection_id).first()
+            if col:
+                col.lastDebugResult = json.dumps(result, ensure_ascii=False, default=str)
+                col.updatedAt = utc_naive_now()
+                db.commit()
+                logger.info("[debug/definition] persisted lastDebugResult to collection %s", collection_id)
         except Exception:
-            logger.exception("persistExtractToEnv: failed to merge extracted into env.autoExtractedVariables")
+            logger.exception("Failed to persist lastDebugResult to collection %s", collection_id)
+
     return result
 
 
@@ -570,6 +601,7 @@ def api_debug_request_chain(body: dict, db: Session = Depends(get_db)):
     env_id = body.get("environmentId")
     base_url = (body.get("baseUrl") or "").strip()
     ctx: dict[str, str] = {}
+    env: ApiEnvironment | None = None
 
     if env_id:
         env = db.query(ApiEnvironment).filter(ApiEnvironment.id == env_id).first()
@@ -594,12 +626,18 @@ def api_debug_request_chain(body: dict, db: Session = Depends(get_db)):
     except (TypeError, ValueError):
         default_to = DEFAULT_STEP_TIMEOUT_S
 
-    return debug_http_request_chain(
+    result = debug_http_request_chain(
         base_url=base_url,
         initial_ctx=ctx,
         chain_steps=steps,
         default_timeout=default_to,
     )
+    if env is not None and body.get("persistExtractToEnv", True) is not False:
+        try:
+            _persist_debug_extracted_to_auto_env(db, env, result)
+        except Exception:
+            logger.exception("request-chain persistExtractToEnv: failed")
+    return result
 
 
 @router.delete("/endpoints/{eid}")
@@ -712,8 +750,9 @@ def generate_from_endpoints(cid: str, body: dict, db: Session = Depends(get_db))
 def sync_steps_from_drafts(cid: str, db: Session = Depends(get_db)):
     """将集合中每个步骤的 request body/headers/extract 从对应接口的 debugDraft 同步更新。
 
-    匹配规则：仅按步骤上的 endpointId（接口清单主键）查找草稿；不再用 method+path，避免同路径多接口串数据。
-    无 endpointId 的步骤会跳过（旧数据需重新「从清单生成」或「添加接口」以写入 id）。
+    匹配规则：
+    1. 优先按步骤上的 endpointId（接口清单主键）查找草稿；
+    2. 若无 endpointId，回退到 method+path 精确匹配（唯一命中时使用，并自动补写 endpointId 方便下次直接按 id 匹配）。
     """
     c = db.query(ApiCollection).filter(ApiCollection.id == cid).first()
     if not c:
@@ -726,19 +765,17 @@ def sync_steps_from_drafts(cid: str, db: Session = Depends(get_db)):
     if not steps:
         return {"definition": c.definition, "updated": 0, "total": 0}
 
-    # 一次性按 id 拉取本批步骤涉及的接口，避免逐步查询
-    eid_set: set[str] = set()
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        raw = step.get("endpointId")
-        eid = str(raw).strip() if raw is not None else ""
-        if eid:
-            eid_set.add(eid)
-    ep_by_id: dict[str, ApiEndpoint] = {}
-    if eid_set:
-        for ep in db.query(ApiEndpoint).filter(ApiEndpoint.id.in_(eid_set)).all():
-            ep_by_id[ep.id] = ep
+    all_endpoints = db.query(ApiEndpoint).all()
+    ep_by_id: dict[str, ApiEndpoint] = {ep.id: ep for ep in all_endpoints}
+
+    # method+path → endpoints 映射（仅 http/https），用于 endpointId 缺失时回退匹配
+    from collections import defaultdict
+    ep_by_route: dict[str, list[ApiEndpoint]] = defaultdict(list)
+    for ep in all_endpoints:
+        proto = (ep.protocol or "http").lower()
+        if proto in ("http", "https"):
+            key = f"{ep.method.upper()}:{ep.path}"
+            ep_by_route[key].append(ep)
 
     updated_count = 0
     for step in steps:
@@ -747,11 +784,21 @@ def sync_steps_from_drafts(cid: str, db: Session = Depends(get_db)):
         req = step.get("request")
         if not isinstance(req, dict):
             continue
+
+        # 确定关联的接口
         raw_eid = step.get("endpointId")
         eid = str(raw_eid).strip() if raw_eid is not None else ""
-        if not eid:
-            continue
-        ep = ep_by_id.get(eid)
+        ep: ApiEndpoint | None = ep_by_id.get(eid) if eid else None
+
+        # 回退：按 method+path 精确匹配，唯一命中则采用并补写 endpointId
+        if ep is None:
+            method_raw = str(req.get("method") or "GET").upper()
+            path_raw = str(req.get("path") or "")
+            candidates = ep_by_route.get(f"{method_raw}:{path_raw}") or []
+            if len(candidates) == 1:
+                ep = candidates[0]
+                step["endpointId"] = ep.id
+
         if not ep or not ep.debugDraft:
             continue
 
@@ -1033,12 +1080,14 @@ class _GenJobState(TypedDict, total=False):
     result: dict[str, Any]
     error: str
     createdAt: float
+    progress: dict[str, Any]
 
 _gen_jobs: dict[str, _GenJobState] = {}
 _gen_jobs_lock = threading.Lock()
 
 
 def _run_gen_job(job_id: str, mode: str, kwargs: dict[str, Any]) -> None:
+    print(f"[_run_gen_job] START job_id={job_id} mode={mode} kwargs_keys={list(kwargs.keys())}", flush=True)
     db = SessionLocal()
     try:
         with _gen_jobs_lock:
@@ -1047,9 +1096,16 @@ def _run_gen_job(job_id: str, mode: str, kwargs: dict[str, Any]) -> None:
                 j["status"] = "running"
 
         if mode == "single":
+            print(f"[_run_gen_job] calling generate_single_api_tests with endpoint_ids={kwargs.get('endpoint_ids')}", flush=True)
             result = generate_single_api_tests(db, **kwargs)
-        elif mode == "chain":
-            result = generate_chain_tests(db, **kwargs)
+        elif mode == "explore":
+            def _update_progress(prog: dict[str, Any]) -> None:
+                with _gen_jobs_lock:
+                    j2 = _gen_jobs.get(job_id)
+                    if j2:
+                        j2["progress"] = prog
+            print(f"[_run_gen_job] calling explore_api_tests endpoint_id={kwargs.get('endpoint_id')}", flush=True)
+            result = explore_api_tests(db, on_progress=_update_progress, **kwargs)
         else:
             raise ValueError(f"未知生成模式: {mode}")
 
@@ -1072,11 +1128,13 @@ def _run_gen_job(job_id: str, mode: str, kwargs: dict[str, Any]) -> None:
 @router.post("/generate-api-tests")
 def start_generate_api_tests(body: dict, background_tasks: BackgroundTasks):
     """为选中的接口生成单接口测试用例（异步）"""
+    print(f"[generate-api-tests] RECEIVED request body keys={list(body.keys())}", flush=True)
     endpoint_ids = body.get("endpointIds")
     if not endpoint_ids or not isinstance(endpoint_ids, list):
         raise HTTPException(400, detail="endpointIds 必填且为数组")
 
     job_id = str(uuid.uuid4())
+    print(f"[generate-api-tests] job_id={job_id} endpoint_ids={endpoint_ids}", flush=True)
     with _gen_jobs_lock:
         _gen_jobs[job_id] = {"status": "pending", "createdAt": time.time() * 1000}
 
@@ -1084,52 +1142,10 @@ def start_generate_api_tests(body: dict, background_tasks: BackgroundTasks):
         _run_gen_job,
         job_id,
         "single",
-        {"endpoint_ids": endpoint_ids, "environment_id": body.get("environmentId")},
+        {"endpoint_ids": endpoint_ids, "environment_id": body.get("environmentId"), "global_prompt": body.get("globalPrompt") or ""},
     )
     return {"jobId": job_id}
 
-
-@router.post("/analyze-dependencies")
-def api_analyze_dependencies(body: dict, db: Session = Depends(get_db)):
-    """分析接口依赖关系（同步）"""
-    endpoint_ids = body.get("endpointIds")
-    if not endpoint_ids or not isinstance(endpoint_ids, list):
-        raise HTTPException(400, detail="endpointIds 必填且为数组")
-    if len(endpoint_ids) < 2:
-        raise HTTPException(400, detail="至少需要选择 2 个接口")
-
-    try:
-        chains = analyze_dependencies(db, endpoint_ids)
-    except Exception as e:
-        raise HTTPException(500, detail=str(e))
-    return {"chains": chains}
-
-
-@router.post("/generate-chain-tests")
-def start_generate_chain_tests(body: dict, background_tasks: BackgroundTasks):
-    """为确认的依赖链路生成测试用例（异步）"""
-    chains = body.get("chains")
-    if not chains or not isinstance(chains, list):
-        raise HTTPException(400, detail="chains 必填且为数组")
-    endpoint_ids = body.get("endpointIds")
-    if not endpoint_ids or not isinstance(endpoint_ids, list):
-        raise HTTPException(400, detail="endpointIds 必填且为数组")
-
-    job_id = str(uuid.uuid4())
-    with _gen_jobs_lock:
-        _gen_jobs[job_id] = {"status": "pending", "createdAt": time.time() * 1000}
-
-    background_tasks.add_task(
-        _run_gen_job,
-        job_id,
-        "chain",
-        {
-            "chains": chains,
-            "endpoint_ids": endpoint_ids,
-            "environment_id": body.get("environmentId"),
-        },
-    )
-    return {"jobId": job_id}
 
 
 @router.get("/generate-api-tests/status/{job_id}")
@@ -1140,6 +1156,51 @@ def gen_api_tests_status(job_id: str):
     if not job:
         raise HTTPException(404, detail="Job not found")
     payload: dict[str, Any] = {"status": job["status"]}
+    if job["status"] == "completed" and job.get("result") is not None:
+        payload["result"] = job["result"]
+    if job["status"] == "failed" and job.get("error"):
+        payload["error"] = job["error"]
+    return payload
+
+
+@router.post("/explore-api-tests")
+def start_explore_api_tests(body: dict, background_tasks: BackgroundTasks):
+    """AI 探索式接口测试（异步）"""
+    endpoint_id = body.get("endpointId")
+    environment_id = body.get("environmentId")
+    if not endpoint_id or not isinstance(endpoint_id, str):
+        raise HTTPException(400, detail="endpointId 必填")
+    if not environment_id or not isinstance(environment_id, str):
+        raise HTTPException(400, detail="environmentId 必填")
+
+    job_id = str(uuid.uuid4())
+    with _gen_jobs_lock:
+        _gen_jobs[job_id] = {"status": "pending", "createdAt": time.time() * 1000}
+
+    background_tasks.add_task(
+        _run_gen_job,
+        job_id,
+        "explore",
+        {
+            "endpoint_id": endpoint_id,
+            "environment_id": environment_id,
+            "user_prompt": body.get("userPrompt") or "",
+            "max_rounds": min(int(body.get("maxRounds") or 12), 20),
+        },
+    )
+    return {"jobId": job_id}
+
+
+@router.get("/explore-api-tests/progress/{job_id}")
+def explore_api_tests_progress(job_id: str):
+    """查询 AI 探索测试进度（含每一轮的详细结果）"""
+    with _gen_jobs_lock:
+        job = _gen_jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, detail="Job not found")
+    payload: dict[str, Any] = {"status": job["status"]}
+    if job.get("progress"):
+        payload["progress"] = job["progress"]
     if job["status"] == "completed" and job.get("result") is not None:
         payload["result"] = job["result"]
     if job["status"] == "failed" and job.get("error"):

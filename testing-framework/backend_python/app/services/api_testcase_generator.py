@@ -7,6 +7,7 @@ import logging
 import re
 import threading
 from typing import Any
+from urllib.parse import parse_qs, unquote, urlparse
 
 from sqlalchemy.orm import Session
 
@@ -19,6 +20,44 @@ from app.util import new_id
 logger = logging.getLogger(__name__)
 
 CHAT_TIMEOUT_SEC = 300
+
+
+def _normalize_step_request_path(req: dict[str, Any]) -> None:
+    """If path contains query params, extract them into request.json and clean the path.
+
+    Also handles cases where LLM puts the full URL (with host) in the path field.
+    """
+    raw_path = str(req.get("path") or "/")
+    if "?" not in raw_path and "://" not in raw_path:
+        return
+
+    try:
+        parsed = urlparse(raw_path) if "://" in raw_path else urlparse("http://placeholder" + raw_path)
+    except Exception:
+        return
+
+    clean_path = unquote(parsed.path) if parsed.path else "/"
+    if "://" in raw_path and clean_path == "/":
+        clean_path = raw_path.split("?")[0]
+
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    if not qs:
+        if "://" in raw_path:
+            req["path"] = clean_path
+        return
+
+    params: dict[str, str] = {}
+    for k, v_list in qs.items():
+        params[unquote(k)] = unquote(v_list[0]) if v_list else ""
+
+    existing_json = req.get("json")
+    if isinstance(existing_json, dict):
+        merged = {**params, **existing_json}
+        req["json"] = merged
+    elif existing_json is None:
+        req["json"] = params
+
+    req["path"] = clean_path
 
 
 def _repair_json(text: str) -> str:
@@ -66,12 +105,38 @@ SINGLE_API_SYSTEM_PROMPT_TMPL = """\
 - name: 「{category}-具体场景」
 - category: "{category}"
 - priority: P0/P1/P2
-- description: 一句话描述
+- description: 一句话描述预期行为
 - request: {{method, path, headers: {{}}, json: {{...}}}}
 - assert: [{{type: "status", equals: 数字}}, ...]
 
+## 关键要求 1：request.json 必须针对每个场景做出实际修改
+
+request.json 中的**字段名必须与样例请求 requestBody 中的字段名完全一致**，不要自行改名（如样例用 uid 就用 uid，不要改成 user_id）。只修改字段的值，不要修改字段名。
+
+每个测试场景的 request.json 必须真正体现该场景的测试意图，不能所有场景都用相同的请求参数。示例：
+- 「参数校验-必填字段为空」→ 把必填字段设为 "" 或 null，或直接删掉该字段
+- 「参数校验-类型错误」→ 把数字字段改为字符串 "abc"，把字符串字段改为数字
+- 「边界值-超长字符串」→ 把字符串字段改为 500+ 字符的长串
+- 「边界值-空串」→ 把字符串字段改为 ""
+- 「异常场景-未授权」→ 请求头去掉 Authorization 或使用无效 Token
+- 「正常流程」→ 使用合理的合法参数（可以和原样例不同的合法值）
+
+如果接口是 GET 且参数在 query string / json 中，同样需要修改参数值来制造不同场景。
+
+## 关键要求 2：断言必须优先参考接口文档
+
+很多业务接口在参数错误/异常时，HTTP 状态码仍然返回 200，而通过响应体中的业务错误码（如 error_code、code、errno 等字段）区分成功与失败。
+
+断言生成规则（按优先级）：
+1. **如果接口文档（apiDoc）中明确说明了错误码/状态码**，必须严格按文档断言。
+   例如文档说"缺少参数返回 error_code=10001"，则断言应为：
+   [{{"type":"status","equals":200}},{{"type":"jsonpath_equals","path":"$.error_code","equals":10001}}]
+2. **如果接口文档未提供具体错误码，但样例响应中可以看到 error_code/code 等字段**，
+   则根据场景合理推测业务错误码，并用 jsonpath_equals 断言。
+3. **只有在完全没有接口文档、也看不出业务错误码模式时**，才使用通用 HTTP 4xx 断言。
+
 断言类型支持: status / jsonpath_exists / jsonpath_equals / jsonpath_not_equals / body_contains / status_in
-每个场景至少一个 status 断言。
+每个场景至少一个断言。正常流程场景断言成功状态码 + 关键响应字段。
 
 只输出合法 JSON 数组，无注释无尾逗号，紧凑格式。"""
 
@@ -81,62 +146,6 @@ SINGLE_API_CATEGORIES = [
     ("异常场景", "异常场景（未授权/Token过期/重复提交）和业务规则异常", 3),
     ("边界值", "边界值测试（空串、超长字符串、数值极值）", 3),
 ]
-
-DEPENDENCY_ANALYSIS_SYSTEM_PROMPT = """\
-你是一名资深 API 测试工程师。你的任务是分析一组 HTTP 接口之间的依赖关系。
-
-依赖关系指：某个接口的请求参数需要使用另一个接口响应中的字段。
-例如：注册接口的「验证码」参数需要先调用「发送验证码」接口获取。
-
-请分析输入的所有接口，识别出可能的依赖链路（业务流程），并返回推荐的测试链路。
-
-每条链路包含：
-- name: 链路名称（简洁描述业务流程，如「用户注册流程」）
-- description: 链路说明
-- steps: 步骤数组，每个步骤包含：
-  - endpointId: 接口 ID
-  - name: 步骤名称
-  - extract: 需要从响应中提取的字段（对象，key 为变量名，value 为 jsonpath 表达式）
-  - dependsOnVars: 此步骤依赖的变量名数组（来自前面步骤的 extract）
-
-注意：
-- 一个接口可以出现在多条链路中
-- 步骤顺序应反映实际调用顺序
-- extract 中的 jsonpath 应基于响应体结构合理推断
-- 如果无法确定依赖关系，也要尝试根据接口名称和参数语义进行推断
-
-重要：只输出一个合法的 JSON 数组，不要添加注释、不要有尾逗号、不要有其他文字说明。确保 JSON 格式严格正确。"""
-
-CHAIN_TEST_SYSTEM_PROMPT = """\
-你是一名资深 API 测试工程师。你的任务是为给定的接口依赖链路生成全面的测试用例。
-
-每条链路代表一个业务流程，其中的步骤按顺序执行，前一步骤的响应通过变量提取传递给后续步骤。
-
-你需要为每条链路生成多个测试场景：
-1. **Happy Path**: 全流程正常，所有步骤均成功
-2. **中间节点失败**: 某个前置步骤返回错误数据，验证后续步骤的错误处理
-3. **参数篡改**: 修改中间提取的变量值，验证下游接口的校验能力
-4. **缺失依赖**: 跳过前置步骤，直接调用后续步骤，验证依赖校验
-
-每个测试场景是一个完整的集合定义，包含：
-- name: 场景名称
-- description: 场景说明
-- category: 分类（Happy Path / 中间节点失败 / 参数篡改 / 缺失依赖）
-- priority: P0/P1/P2
-- steps: 步骤数组，每个步骤包含：
-  - name: 步骤名
-  - protocol: "http"
-  - request: { method, path, headers, json }
-  - assert: 断言数组
-  - extract: 变量提取（key 为变量名，value 为 jsonpath）
-
-注意：
-- 使用 {{变量名}} 引用前面步骤提取的变量
-- Happy Path 的 steps 应包含完整的 extract 规则
-- 失败场景中，故意出错的步骤不需要 extract
-- 断言应具体到状态码和关键响应字段
-
-重要：只输出一个合法的 JSON 数组，不要添加注释、不要有尾逗号、不要有其他文字说明。确保 JSON 格式严格正确。"""
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +188,18 @@ def _endpoint_info_for_prompt(ep: ApiEndpoint) -> dict[str, Any]:
                 info["headers"] = h
         except json.JSONDecodeError:
             pass
+
+    if ep.apiDoc and ep.apiDoc.strip():
+        info["apiDoc"] = ep.apiDoc.strip()
+
+    last_result = draft.get("lastDebugResult")
+    if isinstance(last_result, dict):
+        resp_body = last_result.get("responseBody") or last_result.get("body") or ""
+        if isinstance(resp_body, str) and resp_body.strip():
+            try:
+                info["sampleResponse"] = json.loads(resp_body)
+            except json.JSONDecodeError:
+                pass
 
     return info
 
@@ -263,6 +284,7 @@ def generate_single_api_tests(
     db: Session,
     endpoint_ids: list[str],
     environment_id: str | None = None,
+    global_prompt: str = "",
 ) -> dict[str, Any]:
     """
     For each endpoint, call LLM to generate test scenarios.
@@ -303,10 +325,46 @@ def generate_single_api_tests(
             sys_prompt = SINGLE_API_SYSTEM_PROMPT_TMPL.format(
                 category=cat_name, category_desc=cat_desc, count=cat_count,
             )
-            user_prompt = f"## 接口定义\n```json\n{ep_json_str}\n```{env_info}\n\n请生成 {cat_count} 个「{cat_name}」分类的测试场景。"
+            api_doc_section = ""
+            if ep.apiDoc and ep.apiDoc.strip():
+                api_doc_section = f"\n\n## 接口文档\n{ep.apiDoc.strip()}"
 
-            logger.info("[generate_single_api_tests] endpoint=%s %s, category=%s",
-                         ep.method, ep.path, cat_name)
+            global_prompt_section = ""
+            if global_prompt.strip():
+                global_prompt_section = f"\n\n## 补充说明\n{global_prompt.strip()}"
+
+            sample_resp_hint = ""
+            if "sampleResponse" in ep_info:
+                sample_resp_hint = (
+                    "\n\n上面 sampleResponse 是该接口正常调用的**实际响应样例**。"
+                    "请注意响应体中的错误码字段（如 error_code、code 等）和消息字段，"
+                    "异常场景的断言应基于这些业务字段而非 HTTP 状态码。"
+                )
+
+            user_prompt = (
+                f"## 接口定义\n```json\n{ep_json_str}\n```\n\n"
+                f"上面 requestBody 是该接口的一个**样例请求参数**。"
+                f"你必须基于这些字段，针对每个测试场景**实际修改参数值**（修改、删除、置空、改类型等），"
+                f"而不是每个场景都用相同的请求参数。"
+                f"**注意：字段名必须与 requestBody 中的完全一致，禁止自行改名。**"
+                f"{sample_resp_hint}"
+                f"{api_doc_section}{env_info}{global_prompt_section}\n\n"
+                f"请生成 {cat_count} 个「{cat_name}」分类的测试场景，确保每个场景的 request.json 都有针对性的修改，"
+                f"断言必须优先参考接口文档和样例响应中的业务错误码。"
+            )
+
+            print("=" * 80, flush=True)
+            print(f"[LLM REQ] endpoint={ep.method} {ep.path}, category={cat_name}", flush=True)
+            print(f"[LLM REQ] ep_info JSON:\n{ep_json_str}", flush=True)
+            print(f"[LLM REQ] apiDoc ({len(ep.apiDoc.strip()) if ep.apiDoc else 0} chars): "
+                  f"{repr(ep.apiDoc.strip()[:500]) if ep.apiDoc else '(empty)'}", flush=True)
+            print(f"[LLM REQ] sampleResponse present: {'sampleResponse' in ep_info}", flush=True)
+            print(f"[LLM REQ] globalPrompt: {repr(global_prompt[:300]) if global_prompt else '(empty)'}", flush=True)
+            print("-" * 40, flush=True)
+            print(f"[LLM REQ] SYSTEM PROMPT:\n{sys_prompt}", flush=True)
+            print("-" * 40, flush=True)
+            print(f"[LLM REQ] USER PROMPT:\n{user_prompt}", flush=True)
+            print("=" * 80, flush=True)
             try:
                 raw = _run_llm_chat(sys_prompt, user_prompt)
                 batch = _parse_llm_json(raw)
@@ -323,29 +381,47 @@ def generate_single_api_tests(
         logger.info("[generate_single_api_tests] total %d scenarios for %s %s",
                      len(scenarios), ep.method, ep.path)
 
+        ep_headers: dict[str, Any] = {}
+        if ep.debugDraft:
+            try:
+                dd = json.loads(ep.debugDraft)
+                if isinstance(dd, dict):
+                    hs = (dd.get("headers") or "").strip()
+                    if hs and hs != "{}":
+                        parsed_h = json.loads(hs)
+                        if isinstance(parsed_h, dict):
+                            ep_headers = parsed_h
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         steps: list[dict[str, Any]] = []
         for sc in scenarios:
             if not isinstance(sc, dict):
                 continue
             step: dict[str, Any] = {
                 "name": str(sc.get("name") or "unnamed"),
+                "endpointId": ep.id,
                 "protocol": "http",
                 "priority": str(sc.get("priority") or "P1"),
                 "category": str(sc.get("category") or ""),
             }
             req_obj = sc.get("request")
+            llm_headers = {}
             if isinstance(req_obj, dict):
+                if isinstance(req_obj.get("headers"), dict):
+                    llm_headers = req_obj["headers"]
+                merged_headers = {**ep_headers, **llm_headers}
                 step["request"] = {
-                    "method": str(req_obj.get("method") or ep.method).upper(),
-                    "path": str(req_obj.get("path") or ep.path),
-                    "headers": req_obj.get("headers") if isinstance(req_obj.get("headers"), dict) else {},
+                    "method": ep.method.upper(),
+                    "path": ep.path,
+                    "headers": merged_headers,
                 }
                 if "json" in req_obj and req_obj["json"] is not None:
                     step["request"]["json"] = req_obj["json"]
                 elif req_obj.get("body") is not None:
                     step["request"]["body"] = str(req_obj["body"])
             else:
-                step["request"] = {"method": ep.method, "path": ep.path, "headers": {}}
+                step["request"] = {"method": ep.method, "path": ep.path, "headers": dict(ep_headers)}
 
             assert_list = sc.get("assert") or sc.get("asserts") or sc.get("assertions")
             if isinstance(assert_list, list):
@@ -353,6 +429,7 @@ def generate_single_api_tests(
             else:
                 step["assert"] = [{"type": "status", "equals": 200}]
 
+            _normalize_step_request_path(step.get("request") or {})
             _normalize_step_asserts(step)
             steps.append(step)
 
@@ -415,202 +492,3 @@ def generate_single_api_tests(
     }
 
 
-# ---------------------------------------------------------------------------
-# Dependency analysis
-# ---------------------------------------------------------------------------
-
-def analyze_dependencies(
-    db: Session,
-    endpoint_ids: list[str],
-) -> list[dict[str, Any]]:
-    """
-    Use LLM to analyze dependencies among selected endpoints.
-    Returns recommended chains (synchronous, typically fast).
-    """
-    if not llm_client.is_configured():
-        raise RuntimeError("LLM 未配置")
-
-    endpoints = db.query(ApiEndpoint).filter(ApiEndpoint.id.in_(endpoint_ids)).all()
-    if len(endpoints) < 2:
-        raise ValueError("至少需要选择 2 个接口进行依赖分析")
-
-    eps_info = [_endpoint_info_for_prompt(ep) for ep in endpoints]
-    user_prompt = f"## 接口列表\n```json\n{json.dumps(eps_info, ensure_ascii=False, indent=2)}\n```\n\n请分析这些接口之间的依赖关系，返回推荐的测试链路。"
-
-    logger.info("[analyze_dependencies] %d endpoints, prompt_len=%d", len(endpoints), len(user_prompt))
-
-    raw = _run_llm_chat(DEPENDENCY_ANALYSIS_SYSTEM_PROMPT, user_prompt)
-    chains = _parse_llm_json(raw)
-    if not isinstance(chains, list):
-        raise RuntimeError("LLM 输出格式错误：期望数组")
-
-    for chain in chains:
-        if not isinstance(chain, dict):
-            continue
-        for step in chain.get("steps") or []:
-            if isinstance(step, dict):
-                eid = step.get("endpointId")
-                matched = next((ep for ep in endpoints if ep.id == eid), None)
-                if matched:
-                    step["endpointName"] = matched.name or f"{matched.method} {matched.path}"
-                    step["method"] = matched.method
-                    step["path"] = matched.path
-
-    logger.info("[analyze_dependencies] got %d chains", len(chains))
-    return chains
-
-
-# ---------------------------------------------------------------------------
-# Chain test generation
-# ---------------------------------------------------------------------------
-
-def generate_chain_tests(
-    db: Session,
-    chains: list[dict[str, Any]],
-    endpoint_ids: list[str],
-    environment_id: str | None = None,
-) -> dict[str, Any]:
-    """
-    For confirmed dependency chains, generate test collections.
-    Returns: { collections: [...], testCaseCount: int, requirementId: str }
-    """
-    if not llm_client.is_configured():
-        raise RuntimeError("LLM 未配置")
-
-    endpoints = db.query(ApiEndpoint).filter(ApiEndpoint.id.in_(endpoint_ids)).all()
-    ep_map = {ep.id: ep for ep in endpoints}
-
-    env_info = ""
-    if environment_id:
-        env = db.query(ApiEnvironment).filter(ApiEnvironment.id == environment_id).first()
-        if env:
-            vars_dict = merged_environment_variables_dict(env)
-            if vars_dict:
-                env_info = f"\n\n## 环境变量\n{json.dumps(vars_dict, ensure_ascii=False, indent=2)}"
-
-    chain_names = [c.get("name", "未命名链路") for c in chains[:5]]
-    req_id = new_id()
-    req_record = Requirement(
-        id=req_id,
-        title=f"[链路测试] {', '.join(chain_names)}",
-        content="由接口依赖链路测试自动生成",
-    )
-    db.add(req_record)
-
-    enriched_chains: list[dict[str, Any]] = []
-    for chain in chains:
-        enriched: dict[str, Any] = {
-            "name": chain.get("name", ""),
-            "description": chain.get("description", ""),
-            "steps": [],
-        }
-        for step in chain.get("steps") or []:
-            if not isinstance(step, dict):
-                continue
-            eid = step.get("endpointId")
-            ep = ep_map.get(eid) if eid else None
-            ep_info = _endpoint_info_for_prompt(ep) if ep else {"method": "GET", "path": "/"}
-            enriched["steps"].append({
-                **step,
-                "endpointInfo": ep_info,
-            })
-        enriched_chains.append(enriched)
-
-    user_prompt = f"## 依赖链路\n```json\n{json.dumps(enriched_chains, ensure_ascii=False, indent=2)}\n```{env_info}\n\n请为每条链路生成全面的测试场景。"
-
-    logger.info("[generate_chain_tests] %d chains, prompt_len=%d", len(chains), len(user_prompt))
-
-    raw = _run_llm_chat(CHAIN_TEST_SYSTEM_PROMPT, user_prompt)
-    scenarios = _parse_llm_json(raw)
-    if not isinstance(scenarios, list):
-        raise RuntimeError("LLM 输出格式错误：期望数组")
-
-    collections_created: list[dict[str, Any]] = []
-    total_test_cases = 0
-    next_tc = 1
-
-    for sc in scenarios:
-        if not isinstance(sc, dict):
-            continue
-        sc_name = str(sc.get("name") or "未命名场景")
-        sc_steps = sc.get("steps") or []
-        if not isinstance(sc_steps, list) or not sc_steps:
-            continue
-
-        col_steps: list[dict[str, Any]] = []
-        for s in sc_steps:
-            if not isinstance(s, dict):
-                continue
-            step: dict[str, Any] = {
-                "name": str(s.get("name") or "step"),
-                "protocol": "http",
-            }
-            req_obj = s.get("request")
-            if isinstance(req_obj, dict):
-                step["request"] = {
-                    "method": str(req_obj.get("method") or "GET").upper(),
-                    "path": str(req_obj.get("path") or "/"),
-                    "headers": req_obj.get("headers") if isinstance(req_obj.get("headers"), dict) else {},
-                }
-                if "json" in req_obj and req_obj["json"] is not None:
-                    step["request"]["json"] = req_obj["json"]
-                elif req_obj.get("body") is not None:
-                    step["request"]["body"] = str(req_obj["body"])
-            else:
-                step["request"] = {"method": "GET", "path": "/", "headers": {}}
-
-            assert_list = s.get("assert")
-            if isinstance(assert_list, list):
-                step["assert"] = [a for a in assert_list if isinstance(a, dict)]
-            else:
-                step["assert"] = [{"type": "status", "equals": 200}]
-
-            _normalize_step_asserts(step)
-
-            ext = s.get("extract")
-            if isinstance(ext, dict) and ext:
-                step["extract"] = ext
-
-            col_steps.append(step)
-
-        definition = json.dumps({
-            "continueOnFailure": False,
-            "steps": col_steps,
-        }, ensure_ascii=False)
-
-        col = ApiCollection(
-            id=new_id(),
-            name=f"链路测试 - {sc_name}",
-            description=str(sc.get("description") or sc.get("category") or ""),
-            definition=definition,
-        )
-        db.add(col)
-        collections_created.append({"id": col.id, "name": col.name, "stepCount": len(col_steps)})
-
-        case_id = f"TC-{str(next_tc).zfill(3)}"
-        next_tc += 1
-        steps_desc = "\n".join(f"{i+1}. {s.get('name', 'step')}" for i, s in enumerate(col_steps))
-        tc = TestCase(
-            id=new_id(),
-            requirementId=req_id,
-            caseId=case_id,
-            featurePointL1="链路测试",
-            featurePoint=str(sc.get("category") or "Happy Path")[:200],
-            title=sc_name[:500],
-            priority=str(sc.get("priority") or "P1") if str(sc.get("priority") or "P1") in ("P0", "P1", "P2") else "P1",
-            preconditions=f"链路: {sc_name}",
-            steps=steps_desc[:2000],
-            expected=str(sc.get("description") or "")[:2000],
-            validationPoints="",
-        )
-        db.add(tc)
-        total_test_cases += 1
-
-    db.commit()
-    logger.info("[generate_chain_tests] done: %d collections, %d test cases",
-                len(collections_created), total_test_cases)
-    return {
-        "collections": collections_created,
-        "testCaseCount": total_test_cases,
-        "requirementId": req_id,
-    }

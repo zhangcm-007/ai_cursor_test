@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "react-query";
-import { Button, Form, Input, Modal, Space, Table, Typography, message } from "antd";
+import { Button, Form, Input, Modal, Popconfirm, Space, Table, Typography, message } from "antd";
 import { PlusOutlined, DeleteOutlined } from "@ant-design/icons";
 import { Link } from "react-router-dom";
 import { useState } from "react";
@@ -63,9 +63,18 @@ export default function ApiRegressionCollections() {
             title: "操作",
             width: 100,
             render: (_, r) => (
-              <Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={() => remove.mutate(r.id)}>
-                删除
-              </Button>
+              <Popconfirm
+                title="确认删除该集合？"
+                description={r.name}
+                onConfirm={() => remove.mutate(r.id)}
+                okText="删除"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button type="link" danger size="small" icon={<DeleteOutlined />}>
+                  删除
+                </Button>
+              </Popconfirm>
             ),
           },
         ]}

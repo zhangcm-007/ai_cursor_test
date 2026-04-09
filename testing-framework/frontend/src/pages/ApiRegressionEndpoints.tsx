@@ -7,12 +7,12 @@ import {
   ImportOutlined,
   BugOutlined,
   ExperimentOutlined,
-  LinkOutlined,
 } from "@ant-design/icons";
 import { useState } from "react";
 import { apiRegressionApi, type ApiEndpoint } from "../api/api-regression";
 import { EndpointDebugModal } from "../components/EndpointDebugModal";
 import { ApiTestGenerateModal } from "../components/ApiTestGenerateModal";
+import { ApiExploreModal } from "../components/ApiExploreModal";
 import { parseCurlCommand } from "../utils/parseCurl";
 
 const { TextArea } = Input;
@@ -25,7 +25,8 @@ export default function ApiRegressionEndpoints() {
   const [debugEp, setDebugEp] = useState<ApiEndpoint | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [genOpen, setGenOpen] = useState(false);
-  const [genMode, setGenMode] = useState<"single" | "chain">("single");
+  const [exploreOpen, setExploreOpen] = useState(false);
+  const [exploreEp, setExploreEp] = useState<ApiEndpoint | null>(null);
   const qc = useQueryClient();
   const { data = [], isLoading } = useQuery("api-endpoints", apiRegressionApi.endpoints.list);
   const create = useMutation(apiRegressionApi.endpoints.create, {
@@ -113,21 +114,10 @@ export default function ApiRegressionEndpoints() {
           icon={<ExperimentOutlined />}
           disabled={selectedRowKeys.length === 0}
           onClick={() => {
-            setGenMode("single");
             setGenOpen(true);
           }}
         >
-          生成单接口测试{selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : ""}
-        </Button>
-        <Button
-          icon={<LinkOutlined />}
-          disabled={selectedRowKeys.length < 2}
-          onClick={() => {
-            setGenMode("chain");
-            setGenOpen(true);
-          }}
-        >
-          分析依赖链路{selectedRowKeys.length >= 2 ? ` (${selectedRowKeys.length})` : ""}
+          生成测试用例{selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : ""}
         </Button>
       </Space>
       <Table
@@ -145,11 +135,19 @@ export default function ApiRegressionEndpoints() {
           { title: "协议", dataIndex: "protocol", width: 90 },
           {
             title: "操作",
-            width: 140,
+            width: 210,
             render: (_, r) => (
               <Space size={0} wrap>
                 <Button type="link" size="small" icon={<BugOutlined />} onClick={() => openDebug(r)}>
                   调试
+                </Button>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<ExperimentOutlined />}
+                  onClick={() => { setExploreEp(r); setExploreOpen(true); }}
+                >
+                  AI探索
                 </Button>
                 <Button type="link" danger size="small" icon={<DeleteOutlined />} onClick={() => remove.mutate(r.id)}>
                   删除
@@ -187,6 +185,7 @@ export default function ApiRegressionEndpoints() {
               protocol: v.protocol,
               sampleRequest: v.sampleRequest || "",
               sampleHeaders: (v.sampleHeaders as string) || "",
+              apiDoc: (v.apiDoc as string) || "",
             });
           }}
         >
@@ -241,6 +240,17 @@ export default function ApiRegressionEndpoints() {
           <Form.Item name="description" label="说明">
             <Input />
           </Form.Item>
+          <Form.Item
+            name="apiDoc"
+            label="接口文档（可选）"
+            extra="粘贴开发提供的接口文档，包括参数说明、响应结构、业务规则等。生成测试用例时会作为 LLM 参考信息。"
+          >
+            <TextArea
+              rows={6}
+              placeholder={"请求参数：\n- uid (string, 必填): 用户ID\n- question (string, 必填): 用户问题\n\n响应示例：\n{\"code\": 0, \"data\": {...}}\n\n业务规则：\n- uid 不存在时返回 code=404"}
+              style={{ fontFamily: "monospace", fontSize: 12 }}
+            />
+          </Form.Item>
           <Form.Item name="protocol" label="协议">
             <Input placeholder="http / sse / webrtc" />
           </Form.Item>
@@ -272,10 +282,19 @@ export default function ApiRegressionEndpoints() {
 
       <ApiTestGenerateModal
         open={genOpen}
-        mode={genMode}
         selectedEndpoints={data.filter((ep) => selectedRowKeys.includes(ep.id))}
         onClose={() => {
           setGenOpen(false);
+          qc.invalidateQueries("api-collections");
+        }}
+      />
+
+      <ApiExploreModal
+        open={exploreOpen}
+        endpoint={exploreEp}
+        onClose={() => {
+          setExploreOpen(false);
+          setExploreEp(null);
           qc.invalidateQueries("api-collections");
         }}
       />

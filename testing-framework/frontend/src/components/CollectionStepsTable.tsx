@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { InputRef } from "antd/es/input";
-import { BugOutlined, CaretRightOutlined, CheckOutlined, CloseOutlined, DeleteOutlined, EditOutlined, HolderOutlined, SaveOutlined } from "@ant-design/icons";
+import { BugOutlined, CaretRightOutlined, CheckOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, EditOutlined, HolderOutlined, LoadingOutlined, PlayCircleOutlined, SaveOutlined } from "@ant-design/icons";
 import { Button, Collapse, Input, Popconfirm, Popover, Select, Space, Spin, Switch, Tag, Typography, message } from "antd";
 import { useMutation, useQuery, useQueryClient } from "react-query";
 import {
@@ -13,14 +13,20 @@ import { getApiEnvironmentsFromCache, patchApiEnvironmentInCache } from "../util
 import { mergeAutoExtractedVariablesJson } from "../utils/runVariablesForm";
 import {
   addAssertionsToDefinitionStep,
+  duplicateStepInDefinition,
   findEndpointForStep,
   formatAssertionLabel,
   getAllStepAssertionsFromDefinition,
+  getStepRequestHeadersStr,
+  getStepRequestJsonStr,
   parseCollectionDefinitionSteps,
   removeAssertionFromDefinitionStep,
   removeStepFromDefinition,
   reorderStepsInDefinition,
   updateAssertionInDefinitionStep,
+  updateStepRequestHeadersInDefinition,
+  updateStepRequestJsonInDefinition,
+  updateStepRequestMethodInDefinition,
   mergeStepExtractInDefinition,
   updateStepFieldInDefinition,
   updateStepNameInDefinition,
@@ -33,13 +39,14 @@ import { InteractiveJsonViewer } from "./InteractiveJsonViewer";
 const COLS_CORE = "40px minmax(160px, 1.4fr) 76px 72px minmax(140px, 1.2fr) minmax(120px, 1fr)";
 const GRID_COLS_BASE = COLS_CORE;
 const GRID_COLS_DRAG = `28px ${COLS_CORE} 60px`;
-const GRID_COLS_WITH_DEBUG = `${COLS_CORE} 76px`;
-const GRID_COLS_DRAG_DEBUG = `28px ${COLS_CORE} 76px 60px`;
+const GRID_COLS_WITH_DEBUG = `${COLS_CORE} 140px`;
+const GRID_COLS_DRAG_DEBUG = `28px ${COLS_CORE} 140px 60px`;
 
 function isHttpDebuggableEndpoint(ep: ApiEndpoint): boolean {
   const p = (ep.protocol || "http").toLowerCase();
   return p === "http" || p === "https";
 }
+
 
 type Row = {
   key: number;
@@ -159,6 +166,7 @@ export function CollectionStepsTable({
   endpoints,
   onDefinitionChange,
   onDebugEndpoint,
+  onRunSingleStep,
   debugResult,
   environmentId,
   onSyncToEnv,
@@ -170,6 +178,7 @@ export function CollectionStepsTable({
   endpoints: ApiEndpoint[];
   onDefinitionChange?: (nextDefinitionJson: string) => void;
   onDebugEndpoint?: (ep: ApiEndpoint) => void;
+  onRunSingleStep?: (stepJsonIndex: number) => Promise<ApiDebugChainResult>;
   debugResult?: ApiDebugChainResult | null;
   environmentId?: string;
   onSyncToEnv?: (vars: Record<string, string>) => void;
@@ -187,9 +196,12 @@ export function CollectionStepsTable({
 
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [expandedIdx, setExpandedIdx] = useState<Set<number>>(new Set());
+  const [runningStep, setRunningStep] = useState<number | null>(null);
+  const [singleStepResults, setSingleStepResults] = useState<Record<number, ApiDebugChainResult["steps"][number]>>({});
 
   useEffect(() => {
     if (!debugResult?.steps?.length) return;
+    setSingleStepResults({});
     const failedIdxs = new Set<number>();
     debugResult.steps.forEach((st, i) => {
       if (st.error || st.assertionsPassed === false) failedIdxs.add(i);
@@ -231,7 +243,8 @@ export function CollectionStepsTable({
       protocol: s.protocol,
       priority: s.priority,
       includeInSubset: s.includeInSubset,
-      matched: findEndpointForStep({ method: s.method, path: s.path }, endpoints),
+      matched: (s.endpointId ? endpoints.find((e) => e.id === s.endpointId) : undefined)
+        ?? findEndpointForStep({ method: s.method, path: s.path }, endpoints),
     }));
   }, [definitionRaw, endpoints]);
 
@@ -274,11 +287,11 @@ export function CollectionStepsTable({
         <div>Method</div>
         <div>Path</div>
         <div>接口清单</div>
-        {onDebugEndpoint ? <div>调试</div> : null}
+        {onDebugEndpoint ? <div>运行 / 调试</div> : null}
         {canDrag ? <div>操作</div> : null}
       </div>
       {data.map((r) => {
-        const st = debugResult?.steps?.[r.jsonIndex];
+        const st = singleStepResults[r.jsonIndex] ?? debugResult?.steps?.[r.jsonIndex];
         const stepAsserts = allStepAsserts[r.jsonIndex] ?? [];
         const hasErr = !!st?.error;
         const assertFail = st?.assertionsPassed === false;
@@ -376,38 +389,78 @@ export function CollectionStepsTable({
               </div>
               {onDebugEndpoint ? (
                 <div onClick={(e) => e.stopPropagation()}>
-                  {r.matched && isHttpDebuggableEndpoint(r.matched) ? (
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<BugOutlined />}
-                      onClick={() => onDebugEndpoint(r.matched!)}
-                    >
-                      调试
-                    </Button>
-                  ) : (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>—</Typography.Text>
-                  )}
+                  <Space size={4}>
+                    {onRunSingleStep ? (
+                      <Button
+                        type="primary"
+                        size="small"
+                        ghost
+                        icon={runningStep === r.jsonIndex ? <LoadingOutlined /> : <PlayCircleOutlined />}
+                        disabled={runningStep !== null}
+                        title="单步运行"
+                        onClick={async () => {
+                          setRunningStep(r.jsonIndex);
+                          setExpandedIdx((prev) => new Set(prev).add(r.jsonIndex));
+                          try {
+                            const res = await onRunSingleStep(r.jsonIndex);
+                            if (res.steps?.[0]) {
+                              setSingleStepResults((prev) => ({ ...prev, [r.jsonIndex]: res.steps[0] }));
+                            }
+                          } catch {
+                            message.error("单步运行失败");
+                          } finally {
+                            setRunningStep(null);
+                          }
+                        }}
+                      >
+                        运行
+                      </Button>
+                    ) : null}
+                    {r.matched && isHttpDebuggableEndpoint(r.matched) ? (
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<BugOutlined />}
+                        title="接口调试"
+                        onClick={() => onDebugEndpoint(r.matched!)}
+                      />
+                    ) : null}
+                  </Space>
                 </div>
               ) : null}
               {canDrag ? (
                 <div onClick={(e) => e.stopPropagation()}>
-                  <Popconfirm
-                    title="确认删除该步骤？"
-                    description={`${r.method} ${r.path}`}
-                    onConfirm={() => {
-                      const next = removeStepFromDefinition(definitionRaw, r.jsonIndex);
-                      if (next !== definitionRaw) {
-                        onDefinitionChange!(next);
-                        message.success(`已删除步骤「${r.stepName}」`);
-                      }
-                    }}
-                    okText="删除"
-                    cancelText="取消"
-                    okButtonProps={{ danger: true }}
-                  >
-                    <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                  </Popconfirm>
+                  <Space size={0}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<CopyOutlined />}
+                      title="复制为下一条用例"
+                      onClick={() => {
+                        const next = duplicateStepInDefinition(definitionRaw, r.jsonIndex);
+                        if (next !== definitionRaw) {
+                          onDefinitionChange!(next);
+                          message.success(`已复制步骤「${r.stepName || r.path}」`);
+                        }
+                      }}
+                    />
+                    <Popconfirm
+                      title="确认删除该步骤？"
+                      description={`${r.method} ${r.path}`}
+                      onConfirm={() => {
+                        const next = removeStepFromDefinition(definitionRaw, r.jsonIndex);
+                        if (next !== definitionRaw) {
+                          onDefinitionChange!(next);
+                          message.success(`已删除步骤「${r.stepName}」`);
+                        }
+                      }}
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                    >
+                      <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                    </Popconfirm>
+                  </Space>
                 </div>
               ) : null}
             </div>
@@ -416,6 +469,7 @@ export function CollectionStepsTable({
                 stepIdx={r.jsonIndex}
                 stepResult={st ?? null}
                 stepAsserts={stepAsserts}
+                stepMethod={r.method}
                 definitionRaw={definitionRaw}
                 onDefinitionChange={onDefinitionChange}
                 definitionWritesRequireManualSave={definitionWritesRequireManualSave}
@@ -559,10 +613,154 @@ const PRIORITY_OPTIONS = [
   { value: "P2", label: "P2 - 一般" },
 ];
 
+const METHOD_OPTIONS = [
+  { value: "GET", label: "GET" },
+  { value: "POST", label: "POST" },
+  { value: "PUT", label: "PUT" },
+  { value: "DELETE", label: "DELETE" },
+  { value: "PATCH", label: "PATCH" },
+];
+
+function JsonFieldEditor({
+  saved,
+  placeholder,
+  hint,
+  onSave,
+}: {
+  saved: string;
+  placeholder: string;
+  hint?: string;
+  onSave: (val: string) => void;
+}) {
+  const [draft, setDraft] = useState(saved);
+  const [parseErr, setParseErr] = useState<string | null>(null);
+  const dirty = draft !== saved;
+
+  useEffect(() => {
+    setDraft(saved);
+    setParseErr(null);
+  }, [saved]);
+
+  const handleSave = () => {
+    const trimmed = draft.trim();
+    if (trimmed) {
+      try { JSON.parse(trimmed); } catch (e) {
+        setParseErr(String((e as Error).message));
+        return;
+      }
+    }
+    setParseErr(null);
+    onSave(trimmed);
+  };
+
+  return (
+    <>
+      {hint ? (
+        <Typography.Text type="secondary" style={{ fontSize: 11, display: "block", marginBottom: 4 }}>
+          {hint}
+        </Typography.Text>
+      ) : null}
+      <Input.TextArea
+        value={draft}
+        onChange={(e) => { setDraft(e.target.value); setParseErr(null); }}
+        placeholder={placeholder}
+        autoSize={{ minRows: 2, maxRows: 14 }}
+        style={{ fontFamily: "monospace", fontSize: 12, background: "rgba(0,0,0,0.2)", borderColor: parseErr ? "#ff4d4f" : undefined }}
+      />
+      {parseErr ? (
+        <Typography.Text type="danger" style={{ fontSize: 11, display: "block", marginTop: 2 }}>
+          JSON 格式错误：{parseErr}
+        </Typography.Text>
+      ) : null}
+      <div style={{ marginTop: 6 }}>
+        <Space size={6}>
+          <Button size="small" type="primary" icon={<SaveOutlined />} disabled={!dirty} onClick={handleSave}>保存</Button>
+          {dirty ? <Button size="small" onClick={() => { setDraft(saved); setParseErr(null); }}>还原</Button> : null}
+        </Space>
+      </div>
+    </>
+  );
+}
+
+function StepRequestEditor({
+  stepIdx,
+  method,
+  definitionRaw,
+  onDefinitionChange,
+}: {
+  stepIdx: number;
+  method: string;
+  definitionRaw: string;
+  onDefinitionChange: (s: string) => void;
+}) {
+  const savedBody = useMemo(() => getStepRequestJsonStr(definitionRaw, stepIdx), [definitionRaw, stepIdx]);
+  const savedHeaders = useMemo(() => getStepRequestHeadersStr(definitionRaw, stepIdx), [definitionRaw, stepIdx]);
+  const isGet = method === "GET";
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <Collapse
+        bordered={false}
+        size="small"
+        style={{ background: "transparent" }}
+        items={[
+          {
+            key: "reqEdit",
+            label: (
+              <Space size={6}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {isGet ? "Query 参数" : "请求体 (Body)"}
+                </Typography.Text>
+                {isGet ? <Tag style={{ fontSize: 10, margin: 0 }}>将作为 URL 查询参数发送</Tag> : null}
+              </Space>
+            ),
+            children: (
+              <div onClick={(e) => e.stopPropagation()}>
+                <JsonFieldEditor
+                  saved={savedBody}
+                  placeholder={isGet ? '{"uid": "test_user01", "question": "查询内容"}' : '{"key": "value"}'}
+                  hint={isGet ? "GET 请求的参数会自动转为 URL 查询字符串（?key=value&...）" : undefined}
+                  onSave={(val) => {
+                    const next = updateStepRequestJsonInDefinition(definitionRaw, stepIdx, val);
+                    if (next !== definitionRaw) { onDefinitionChange(next); message.success("请求参数已保存"); }
+                  }}
+                />
+              </div>
+            ),
+          },
+          {
+            key: "headersEdit",
+            label: (
+              <Space size={6}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>请求头 (Headers)</Typography.Text>
+                {savedHeaders ? <Tag style={{ fontSize: 10, margin: 0 }}>{Object.keys(JSON.parse(savedHeaders) || {}).length} 项</Tag> : null}
+              </Space>
+            ),
+            children: (
+              <div onClick={(e) => e.stopPropagation()}>
+                <JsonFieldEditor
+                  saved={savedHeaders}
+                  placeholder='{"Host": "api.example.com", "Authorization": "Bearer {{token}}"}'
+                  hint="JSON 格式的请求头，会与接口清单中配置的请求头合并（步骤配置优先）"
+                  onSave={(val) => {
+                    const next = updateStepRequestHeadersInDefinition(definitionRaw, stepIdx, val);
+                    if (next !== definitionRaw) { onDefinitionChange(next); message.success("请求头已保存"); }
+                  }}
+                />
+              </div>
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
+
 function StepExpandedContent({
   stepIdx,
   stepResult,
   stepAsserts,
+  stepMethod,
   definitionRaw,
   onDefinitionChange,
   definitionWritesRequireManualSave,
@@ -575,6 +773,7 @@ function StepExpandedContent({
   stepIdx: number;
   stepResult: ApiDebugChainResult["steps"][number] | null;
   stepAsserts: DefinitionStepAssertion[];
+  stepMethod: string;
   definitionRaw: string;
   onDefinitionChange?: (s: string) => void;
   definitionWritesRequireManualSave?: boolean;
@@ -590,6 +789,20 @@ function StepExpandedContent({
     <div style={{ padding: "8px 12px 12px 40px", fontSize: 12, borderTop: "1px dashed rgba(255,255,255,0.08)" }}>
       {onDefinitionChange ? (
         <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
+          <Space size={6}>
+            <Typography.Text type="secondary" style={{ fontSize: 11 }}>请求方法：</Typography.Text>
+            <Select
+              size="small"
+              value={stepMethod}
+              options={METHOD_OPTIONS}
+              style={{ width: 100 }}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(val) => {
+                const next = updateStepRequestMethodInDefinition(definitionRaw, stepIdx, val);
+                if (next !== definitionRaw) onDefinitionChange(next);
+              }}
+            />
+          </Space>
           <Space size={6}>
             <Typography.Text type="secondary" style={{ fontSize: 11 }}>优先级：</Typography.Text>
             <Select
@@ -617,6 +830,15 @@ function StepExpandedContent({
             />
           </Space>
         </div>
+      ) : null}
+
+      {onDefinitionChange ? (
+        <StepRequestEditor
+          stepIdx={stepIdx}
+          method={stepMethod}
+          definitionRaw={definitionRaw}
+          onDefinitionChange={onDefinitionChange}
+        />
       ) : null}
 
       {st?.error ? (
@@ -690,7 +912,7 @@ function StepExpandedContent({
               style={{ background: "transparent", marginBottom: 4 }}
               items={[{
                 key: "reqB",
-                label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>请求体</Typography.Text>,
+                label: <Typography.Text type="secondary" style={{ fontSize: 12 }}>{st.requestMethod === "GET" ? "请求参数" : "请求体"}</Typography.Text>,
                 children: <pre style={{ margin: 0, maxHeight: 160, overflow: "auto", background: "rgba(0,0,0,0.2)", padding: 6, borderRadius: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{st.requestBodyMasked}</pre>,
               }]}
             />
@@ -886,17 +1108,34 @@ export function CollectionStepsExpandContent({
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugEnvId, setDebugEnvId] = useState<string | undefined>();
   const [debugResult, setDebugResult] = useState<ApiDebugChainResult | null>(null);
+  const debugResultRestoredRef = useRef(false);
   const qc = useQueryClient();
   const { data, isLoading } = useQuery(
     ["api-collection", collectionId],
     () => apiRegressionApi.collections.get(collectionId),
-    { staleTime: 60_000 }
+    {
+      staleTime: 60_000,
+      onSuccess: (c) => {
+        if (!debugResultRestoredRef.current && c.lastDebugResult && !debugResult) {
+          try {
+            const parsed = JSON.parse(c.lastDebugResult);
+            if (parsed && typeof parsed === "object" && Array.isArray(parsed.steps)) {
+              setDebugResult(parsed);
+            }
+          } catch { /* ignore */ }
+          debugResultRestoredRef.current = true;
+        }
+      },
+    }
   );
   const { data: environments = [] } = useQuery("api-envs", apiRegressionApi.environments.list);
 
   const saveDefinition = useMutation(
     (definition: string) => apiRegressionApi.collections.update(collectionId, { definition }),
     {
+      onSuccess: () => {
+        qc.invalidateQueries(["api-collection", collectionId]);
+      },
       onError: (e: { response?: { data?: { detail?: string } } }) => {
         message.error(e.response?.data?.detail ?? "保存失败");
         qc.invalidateQueries(["api-collection", collectionId]);
@@ -980,6 +1219,7 @@ export function CollectionStepsExpandContent({
     debugDefMut.mutate({
       environmentId: debugEnvId,
       definition: data?.definition ?? "{}",
+      collectionId,
       continueOnFailure: true,
       persistExtractToEnv: true,
     });

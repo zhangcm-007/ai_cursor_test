@@ -40,6 +40,7 @@ class ApiCollection(Base):
     name: Mapped[str] = mapped_column(String)
     description: Mapped[str] = mapped_column(String, default="")
     definition: Mapped[str] = mapped_column(Text, default="{}")
+    lastDebugResult: Mapped[str] = mapped_column("lastDebugResult", Text, default="")
     createdAt: Mapped[datetime] = mapped_column(
         "createdAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now
     )
@@ -65,6 +66,7 @@ class ApiEndpoint(Base):
     sampleRequest: Mapped[str] = mapped_column("sampleRequest", Text, default="")
     sampleHeaders: Mapped[str] = mapped_column("sampleHeaders", Text, default="")
     debugDraft: Mapped[str] = mapped_column("debugDraft", Text, default="{}")
+    apiDoc: Mapped[str] = mapped_column("apiDoc", Text, default="")
     createdAt: Mapped[datetime] = mapped_column(
         "createdAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now
     )

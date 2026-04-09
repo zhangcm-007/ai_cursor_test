@@ -11,6 +11,7 @@ export type ParsedCollectionStep = {
   protocol: string;
   priority: string;
   includeInSubset: boolean;
+  endpointId?: string;
 };
 
 /** 从集合 definition JSON 解析 HTTP(S) 等步骤的请求 method/path（与清单匹配用） */
@@ -35,7 +36,9 @@ export function parseCollectionDefinitionSteps(definitionRaw: string): ParsedCol
         rawName === undefined || rawName === null ? defaultName : String(rawName);
       const priority = String(row.priority ?? "");
       const includeInSubset = row.includeInSubset === true;
-      out.push({ jsonIndex, order: ord, name, method, path, protocol, priority, includeInSubset });
+      const rawEid = row.endpointId;
+      const endpointId = typeof rawEid === "string" && rawEid.trim() ? rawEid.trim() : undefined;
+      out.push({ jsonIndex, order: ord, name, method, path, protocol, priority, includeInSubset, endpointId });
     }
     return out;
   } catch {
@@ -137,6 +140,27 @@ export function reorderStepsInDefinition(
       return definitionRaw;
     const [item] = steps.splice(fromIndex, 1);
     steps.splice(toIndex, 0, item);
+    d.steps = steps;
+    return JSON.stringify(d, null, 2);
+  } catch {
+    return definitionRaw;
+  }
+}
+
+/** 复制 definition 中指定下标的步骤，插入到其后面，返回新 definition 字符串 */
+export function duplicateStepInDefinition(
+  definitionRaw: string,
+  stepIndex: number,
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? [...d.steps] : [];
+    if (stepIndex < 0 || stepIndex >= steps.length) return definitionRaw;
+    const clone = JSON.parse(JSON.stringify(steps[stepIndex]));
+    if (clone && typeof clone === "object" && typeof clone.name === "string") {
+      clone.name = clone.name + " (副本)";
+    }
+    steps.splice(stepIndex + 1, 0, clone);
     d.steps = steps;
     return JSON.stringify(d, null, 2);
   } catch {
@@ -448,12 +472,143 @@ export function getAllStepAssertionsFromDefinition(
   }
 }
 
+/** 读取 definition 中某一步的 request.json（作为格式化 JSON 字符串返回） */
+export function getStepRequestJsonStr(
+  definitionRaw: string,
+  stepJsonIndex: number
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? d.steps : [];
+    if (stepJsonIndex < 0 || stepJsonIndex >= steps.length) return "";
+    const s = steps[stepJsonIndex];
+    if (s == null || typeof s !== "object") return "";
+    const req = (s as Record<string, unknown>).request as Record<string, unknown> | undefined;
+    if (!req) return "";
+    const json = req.json;
+    if (json === undefined || json === null) return "";
+    return JSON.stringify(json, null, 2);
+  } catch {
+    return "";
+  }
+}
+
+/** 更新 definition 中某一步的 request.json，返回新 definition 字符串 */
+export function updateStepRequestJsonInDefinition(
+  definitionRaw: string,
+  stepJsonIndex: number,
+  jsonStr: string
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? d.steps : [];
+    if (stepJsonIndex < 0 || stepJsonIndex >= steps.length) return definitionRaw;
+    const s = steps[stepJsonIndex];
+    if (s == null || typeof s !== "object") return definitionRaw;
+    const row = s as Record<string, unknown>;
+    if (!row.request || typeof row.request !== "object") {
+      row.request = { method: "GET", path: "/" };
+    }
+    const req = row.request as Record<string, unknown>;
+    const trimmed = jsonStr.trim();
+    if (!trimmed) {
+      delete req.json;
+    } else {
+      req.json = JSON.parse(trimmed);
+    }
+    return JSON.stringify(d, null, 2);
+  } catch {
+    return definitionRaw;
+  }
+}
+
+/** 读取 definition 中某一步的 request.headers（作为格式化 JSON 字符串返回） */
+export function getStepRequestHeadersStr(
+  definitionRaw: string,
+  stepJsonIndex: number,
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? d.steps : [];
+    if (stepJsonIndex < 0 || stepJsonIndex >= steps.length) return "";
+    const s = steps[stepJsonIndex];
+    if (s == null || typeof s !== "object") return "";
+    const req = (s as Record<string, unknown>).request as Record<string, unknown> | undefined;
+    if (!req) return "";
+    const headers = req.headers;
+    if (headers === undefined || headers === null) return "";
+    if (typeof headers === "object" && Object.keys(headers as object).length === 0) return "";
+    return JSON.stringify(headers, null, 2);
+  } catch {
+    return "";
+  }
+}
+
+/** 更新 definition 中某一步的 request.headers，返回新 definition 字符串 */
+export function updateStepRequestHeadersInDefinition(
+  definitionRaw: string,
+  stepJsonIndex: number,
+  jsonStr: string,
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? d.steps : [];
+    if (stepJsonIndex < 0 || stepJsonIndex >= steps.length) return definitionRaw;
+    const s = steps[stepJsonIndex];
+    if (s == null || typeof s !== "object") return definitionRaw;
+    const row = s as Record<string, unknown>;
+    if (!row.request || typeof row.request !== "object") {
+      row.request = { method: "GET", path: "/" };
+    }
+    const req = row.request as Record<string, unknown>;
+    const trimmed = jsonStr.trim();
+    if (!trimmed || trimmed === "{}") {
+      req.headers = {};
+    } else {
+      req.headers = JSON.parse(trimmed);
+    }
+    return JSON.stringify(d, null, 2);
+  } catch {
+    return definitionRaw;
+  }
+}
+
+/** 更新 definition 中某一步的 request.method，返回新 definition 字符串 */
+export function updateStepRequestMethodInDefinition(
+  definitionRaw: string,
+  stepJsonIndex: number,
+  method: string,
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? d.steps : [];
+    if (stepJsonIndex < 0 || stepJsonIndex >= steps.length) return definitionRaw;
+    const s = steps[stepJsonIndex];
+    if (s == null || typeof s !== "object") return definitionRaw;
+    const row = s as Record<string, unknown>;
+    if (!row.request || typeof row.request !== "object") {
+      row.request = { method: method.toUpperCase(), path: "/" };
+    } else {
+      (row.request as Record<string, unknown>).method = method.toUpperCase();
+    }
+    return JSON.stringify(d, null, 2);
+  } catch {
+    return definitionRaw;
+  }
+}
+
 export function findEndpointForStep(
   step: { method: string; path: string },
   endpoints: ApiEndpoint[]
 ): ApiEndpoint | undefined {
+  const m = step.method.toUpperCase();
+  const exact = endpoints.find(
+    (e) => (e.method || "GET").toUpperCase() === m && (e.path || "") === step.path
+  );
+  if (exact) return exact;
+  const stepPathOnly = step.path.split("?")[0];
   return endpoints.find(
-    (e) => (e.method || "GET").toUpperCase() === step.method && (e.path || "") === step.path
+    (e) => (e.method || "GET").toUpperCase() === m && (e.path || "").split("?")[0] === stepPathOnly
   );
 }
 
@@ -466,6 +621,23 @@ export type ChainDebugSeedRow = {
   body: string;
   extractJson: string;
 };
+
+/** 提取 definition 中指定步骤，构造只含该步骤的 mini definition JSON 字符串 */
+export function getSingleStepDefinition(
+  definitionRaw: string,
+  stepJsonIndex: number,
+): string {
+  try {
+    const d = JSON.parse(definitionRaw) as { steps?: unknown[] };
+    const steps = Array.isArray(d.steps) ? d.steps : [];
+    if (stepJsonIndex < 0 || stepJsonIndex >= steps.length) return "";
+    const step = steps[stepJsonIndex];
+    if (step == null || typeof step !== "object") return "";
+    return JSON.stringify({ steps: [step] }, null, 2);
+  } catch {
+    return "";
+  }
+}
 
 export function buildChainDebugSeedFromDefinition(
   definitionRaw: string,

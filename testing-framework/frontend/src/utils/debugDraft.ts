@@ -1,7 +1,8 @@
-import type { ApiEndpoint, ApiEnvironment } from "../api/api-regression";
+import type { ApiDebugResult, ApiEndpoint, ApiEnvironment } from "../api/api-regression";
 import { headersObjectToList, headersListToJsonString, type HeaderRow } from "../components/HeadersFieldList";
 import { defaultDebugAssertRow, type DebugAssertFormRow } from "./debugAssertions";
 import type { RunVarFormRow } from "./runVariablesForm";
+import { splitPathAndQueryParams } from "./parseCurl";
 
 export type ExtractToEnvRule = { varName: string; path: string };
 
@@ -56,10 +57,16 @@ export function buildDebugModalDefaults(ep: ApiEndpoint, environments: ApiEnviro
       bodyStr = sr;
     }
   }
+  // path 中 ?key=%E4%B8%AD%E6%96%87 自动解码为可读参数，放入 body
+  const { pathname: cleanPath, queryParams } = splitPathAndQueryParams(ep.path);
+  if (Object.keys(queryParams).length > 0 && !bodyStr) {
+    bodyStr = JSON.stringify(queryParams, null, 2);
+  }
+
   return {
     environmentId: environments[0]?.id,
     method,
-    path: ep.path,
+    path: cleanPath,
     headerList: headersObjectToList(headersObj),
     body: bodyStr,
     timeout: 30,
@@ -112,13 +119,16 @@ export function mergeDebugDraftIntoDefaults(
   }
 }
 
-export function debugFormValuesToDraftJson(v: Record<string, unknown>): string {
+export function debugFormValuesToDraftJson(
+  v: Record<string, unknown>,
+  lastDebugResult?: ApiDebugResult | null,
+): string {
   const runVarList = Array.isArray(v.runVarList) ? v.runVarList : [];
   const assertList = Array.isArray(v.assertList) ? v.assertList : [defaultDebugAssertRow()];
   const extractToEnv = Array.isArray(v.extractToEnv) ? v.extractToEnv : [];
   const headerList = Array.isArray(v.headerList) ? v.headerList : [];
   const to = v.timeout != null ? Number(v.timeout) : 30;
-  return JSON.stringify({
+  const draft: Record<string, unknown> = {
     environmentId: v.environmentId ?? null,
     method: v.method,
     path: v.path,
@@ -129,7 +139,23 @@ export function debugFormValuesToDraftJson(v: Record<string, unknown>): string {
     runVarList,
     assertList,
     extractToEnv,
-  });
+  };
+  if (lastDebugResult !== undefined) {
+    draft.lastDebugResult = lastDebugResult;
+  }
+  return JSON.stringify(draft);
+}
+
+export function extractLastDebugResult(draftRaw: string | undefined): ApiDebugResult | null {
+  if (!draftRaw) return null;
+  try {
+    const d = JSON.parse(draftRaw) as Record<string, unknown>;
+    const r = d?.lastDebugResult;
+    if (r && typeof r === "object" && "statusCode" in (r as object)) {
+      return r as ApiDebugResult;
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 export function hasSavedDebugDraft(draftRaw: string | undefined): boolean {

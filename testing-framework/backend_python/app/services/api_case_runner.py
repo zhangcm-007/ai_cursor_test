@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 from jsonpath_ng import parse as jsonpath_parse
 from sqlalchemy.orm import Session
+from urllib.parse import parse_qs, unquote, urlparse
 
 from app.db_types import utc_naive_now
 from app.models_api import ApiCollection, ApiEndpoint, ApiEnvironment, ApiRun, ApiRunStep
@@ -26,6 +27,12 @@ MAX_STEPS = 200
 MAX_BODY_STORE = 65536
 DEFAULT_STEP_TIMEOUT_S = 30.0
 DEFAULT_RUN_TIMEOUT_S = 600.0
+
+DEFAULT_HTTP_HEADERS: dict[str, str] = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+    "Cache-Control": "no-cache",
+}
 
 
 def _truncate(s: str | None, limit: int = MAX_BODY_STORE) -> str:
@@ -71,6 +78,7 @@ def _builtin_placeholder_value(inner: str) -> str | None:
     - {{$randEmail||域名}}              → test123456@qq.com
     - {{$randEmail|前缀|域名}}          → manji123456@qq.com
     - {{$encPwd|明文密码}}（AiWealth 密码混淆：salt+base64+reverse）
+    - {{$randPick|值1|值2|值3|...}}     → 从自定义列表中随机取一个值
 
     另外：变量名以 Pwd 结尾（如 rawPwd）的环境变量，引用时在 substitute_vars 中自动加密。
     """
@@ -103,6 +111,13 @@ def _builtin_placeholder_value(inner: str) -> str | None:
             prefix = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "test"
             domain = parts[2].strip() if len(parts) > 2 and parts[2].strip() else "example.com"
             return f"{prefix}{random.randint(100_000, 999_999)}@{domain}"
+        return None
+    if k.startswith("$randPick"):
+        parts = k.split("|")
+        if len(parts) >= 2 and parts[0].strip() == "$randPick":
+            candidates = [p.strip() for p in parts[1:] if p.strip()]
+            if candidates:
+                return random.choice(candidates)
         return None
     if k.startswith("$encPwd"):
         parts = [p.strip() for p in k.split("|", 1)]
@@ -221,10 +236,22 @@ def endpoint_request_json_template(ep: ApiEndpoint) -> Any | None:
     return None
 
 
+def _value_contains_placeholder(v: Any) -> bool:
+    """递归检查值中是否包含 {{...}} 占位符。"""
+    if isinstance(v, str):
+        return "{{" in v
+    if isinstance(v, dict):
+        return any(_value_contains_placeholder(x) for x in v.values())
+    if isinstance(v, list):
+        return any(_value_contains_placeholder(x) for x in v)
+    return False
+
+
 def merge_definition_json_with_endpoint_template(def_json: Any, ep_json: Any) -> Any:
     """
     集合 definition 里常为写死的示例（如具体邮箱）；同路径接口上若为 {{email}} 等占位，则用接口模板覆盖该字段。
     已含 {{ 的 definition 字段保留（视为用户显式要用占位或嵌套引用）。
+    对于 definition 中不存在的字段，仅当模板值包含 {{...}} 占位符时才注入（避免注入无关的字面量参数）。
     """
     if ep_json is None:
         return def_json
@@ -242,12 +269,35 @@ def merge_definition_json_with_endpoint_template(def_json: Any, ep_json: Any) ->
                     for a, b in zip(dv, ev)
                 ] + [copy.deepcopy(x) for x in dv[len(ev) :]]
         for k, ev in ep_json.items():
-            if k not in out:
+            if k not in out and _value_contains_placeholder(ev):
                 out[k] = copy.deepcopy(ev)
         return out
     if isinstance(def_json, str) and "{{" not in def_json and isinstance(ep_json, str) and "{{" in ep_json:
         return ep_json
     return def_json
+
+
+def endpoint_headers_template(ep: ApiEndpoint) -> dict[str, str]:
+    """从接口的 debugDraft 中提取用户配置的请求头。"""
+    raw_dd = getattr(ep, "debugDraft", None) or ""
+    if not raw_dd:
+        return {}
+    try:
+        d = json.loads(raw_dd)
+        if not isinstance(d, dict):
+            return {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    hs = (d.get("headers") or "").strip()
+    if not hs or hs == "{}":
+        return {}
+    try:
+        h = json.loads(hs)
+        if isinstance(h, dict):
+            return {str(k): str(v) for k, v in h.items() if v is not None}
+    except json.JSONDecodeError:
+        pass
+    return {}
 
 
 def build_endpoint_template_route_map(endpoints: list[ApiEndpoint]) -> dict[str, Any]:
@@ -262,6 +312,21 @@ def build_endpoint_template_route_map(endpoints: list[ApiEndpoint]) -> dict[str,
         tpl = endpoint_request_json_template(ep)
         if tpl is not None:
             m[f"{method}:{path}"] = tpl
+    return m
+
+
+def build_endpoint_headers_route_map(endpoints: list[ApiEndpoint]) -> dict[str, dict[str, str]]:
+    """key = \"METHOD:path\" -> 接口调试中配置的请求头 dict。"""
+    m: dict[str, dict[str, str]] = {}
+    for ep in endpoints:
+        proto = (getattr(ep, "protocol", None) or "http").lower()
+        if proto not in ("http", "https"):
+            continue
+        method = str(getattr(ep, "method", None) or "GET").upper()
+        path = str(getattr(ep, "path", None) or "")
+        h = endpoint_headers_template(ep)
+        if h:
+            m[f"{method}:{path}"] = h
     return m
 
 
@@ -497,7 +562,9 @@ def execute_run(
     run_started = time.monotonic()
     overall_ok = True
     failed_steps: list[str] = []
-    endpoint_tpl_map = build_endpoint_template_route_map(db.query(ApiEndpoint).all())
+    all_endpoints = db.query(ApiEndpoint).all()
+    endpoint_tpl_map = build_endpoint_template_route_map(all_endpoints)
+    endpoint_hdr_map = build_endpoint_headers_route_map(all_endpoints)
 
     with httpx.Client(follow_redirects=True) as client:
         for idx, step in enumerate(steps):
@@ -537,7 +604,9 @@ def execute_run(
             req = step.get("request") or {}
             method_raw = str(req.get("method") or "GET").upper()
             path_raw = str(req.get("path") or "/")
-            tpl = endpoint_tpl_map.get(f"{method_raw}:{path_raw}")
+
+            path_for_tpl = path_raw.split("?")[0] if "?" in path_raw else path_raw
+            tpl = endpoint_tpl_map.get(f"{method_raw}:{path_for_tpl}")
             merged_json = req.get("json")
             if tpl is not None:
                 if merged_json is not None:
@@ -551,7 +620,11 @@ def execute_run(
             if req.get("url"):
                 url = substitute_vars(str(req["url"]), ctx)
 
-            headers = substitute_obj(req.get("headers") or {}, ctx)
+            ep_run_hdrs = endpoint_hdr_map.get(f"{method_raw}:{path_for_tpl}") or {}
+            step_headers = req.get("headers") or {}
+            merged_step_hdrs = {**ep_run_hdrs, **(step_headers if isinstance(step_headers, dict) else {})}
+            user_headers = substitute_obj(merged_step_hdrs, ctx)
+            headers = {**DEFAULT_HTTP_HEADERS, **{k: v for k, v in user_headers.items() if v is not None and str(v).strip()}}
             timeout = float(step.get("timeout") or DEFAULT_STEP_TIMEOUT_S)
 
             req_body_str = ""
@@ -580,6 +653,14 @@ def execute_run(
             resp_headers: httpx.Headers = httpx.Headers()
             step_err: str | None = None
 
+            run_params = None
+            if method.upper() == "GET" and json_body is not None and isinstance(json_body, dict):
+                flat = {str(k): str(v) for k, v in json_body.items() if not isinstance(v, (dict, list))}
+                if flat and len(flat) == len(json_body):
+                    run_params = flat
+                    json_body = None
+
+            actual_run_url = url
             try:
                 r = client.request(
                     method,
@@ -587,8 +668,10 @@ def execute_run(
                     headers=headers,
                     json=json_body if json_body is not None else None,
                     content=content,
+                    params=run_params,
                     timeout=timeout,
                 )
+                actual_run_url = str(r.request.url)
                 status_code = r.status_code
                 body_text = r.text
                 resp_headers = r.headers
@@ -620,7 +703,7 @@ def execute_run(
                 orderIndex=idx,
                 name=step_name,
                 requestMethod=method,
-                requestUrl=url,
+                requestUrl=actual_run_url,
                 statusCode=status_code,
                 passed=passed,
                 error=step_err or ("" if passed else "断言失败"),
@@ -726,7 +809,8 @@ def debug_http_request_core(
     else:
         url = build_url(base_url, path_s)
 
-    hdrs: dict[str, Any] = substitute_obj(headers if isinstance(headers, dict) else {}, ctx)
+    user_hdrs: dict[str, Any] = substitute_obj(headers if isinstance(headers, dict) else {}, ctx)
+    hdrs: dict[str, Any] = {**DEFAULT_HTTP_HEADERS, **{k: v for k, v in user_hdrs.items() if v is not None and str(v).strip()}}
 
     req_body_str = ""
     jb = None
@@ -766,7 +850,16 @@ def debug_http_request_core(
     resp_headers: httpx.Headers = httpx.Headers()
     step_err: str | None = None
     content_length = 0
+    actual_url = url
     t0 = time.monotonic()
+
+    # GET + flat JSON object → query params instead of body
+    params = None
+    if method_u == "GET" and jb is not None and isinstance(jb, dict):
+        flat = {str(k): str(v) for k, v in jb.items() if not isinstance(v, (dict, list))}
+        if flat and len(flat) == len(jb):
+            params = flat
+            jb = None
 
     try:
         with httpx.Client(follow_redirects=True) as client:
@@ -776,8 +869,15 @@ def debug_http_request_core(
                 headers=hdrs,
                 json=jb if jb is not None else None,
                 content=content,
+                params=params,
                 timeout=float(timeout),
             )
+            actual_url = str(r.request.url)
+            actual_headers = dict(r.request.headers)
+            print(f"[debug_http_request_core] ACTUAL URL sent by httpx: {actual_url}")
+            print(f"[debug_http_request_core] ACTUAL request headers: {actual_headers}")
+            if r.history:
+                print(f"[debug_http_request_core] Redirect history: {[str(h.url) for h in r.history]}")
             status_code = r.status_code
             content_length = len(r.content or b"")
             body_text = _response_body_text(r)
@@ -826,7 +926,7 @@ def debug_http_request_core(
 
     out: dict[str, Any] = {
         "requestMethod": method_u,
-        "requestUrl": url,
+        "requestUrl": actual_url,
         "requestHeadersMasked": mask_sensitive(
             "\n".join(f"{k}: {v}" for k, v in hdrs.items()) if hdrs else ""
         ),
@@ -898,6 +998,7 @@ def debug_definition_steps(
     default_timeout: float = DEFAULT_STEP_TIMEOUT_S,
     continue_on_failure: bool = False,
     endpoint_template_by_route: dict[str, Any] | None = None,
+    endpoint_headers_by_route: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """
     按集合 definition.steps 格式（request.method / request.path / request.json …）从上到下执行调试。
@@ -968,7 +1069,12 @@ def debug_definition_steps(
         headers = headers_raw if isinstance(headers_raw, dict) else {}
 
         json_body = req.get("json")
-        tpl_key = f"{method}:{path}"
+        path_for_tpl = path.split("?")[0] if "?" in path else path
+        tpl_key = f"{method}:{path_for_tpl}"
+
+        ep_hdrs = (endpoint_headers_by_route or {}).get(tpl_key)
+        if ep_hdrs:
+            headers = {**ep_hdrs, **{k: v for k, v in headers.items() if v is not None and str(v).strip()}}
         tpl = (endpoint_template_by_route or {}).get(tpl_key)
         if tpl is not None:
             if json_body is not None:

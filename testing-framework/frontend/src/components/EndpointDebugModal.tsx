@@ -56,11 +56,13 @@ import {
 import {
   buildDebugModalDefaults,
   debugFormValuesToDraftJson,
+  extractLastDebugResult,
   hasSavedDebugDraft,
   mergeDebugDraftIntoDefaults,
   type ExtractToEnvRule,
 } from "../utils/debugDraft";
 import { resolveJsonPath } from "../utils/jsonPathAssert";
+import { looksLikeHtml, HtmlResponseViewer } from "./ResponseBodyViewer";
 
 const { TextArea } = Input;
 
@@ -140,6 +142,7 @@ function formatDebugResponseBody(raw: string): string {
   }
 }
 
+
 function ExtractToEnvRulesEditor({
   value = [],
   onChange,
@@ -199,6 +202,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
   const [curlPaste, setCurlPaste] = useState("");
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
+  const [apiDocDraft, setApiDocDraft] = useState("");
   const qc = useQueryClient();
   const { data: environments = [] } = useQuery("api-envs", apiRegressionApi.environments.list);
 
@@ -211,16 +215,19 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
       setEditingName(false);
       return;
     }
-    if (endpoint) setLocalEp(endpoint);
+    if (endpoint) {
+      setLocalEp(endpoint);
+      setApiDocDraft(endpoint.apiDoc || "");
+    }
   }, [open, endpoint]);
 
   const saveDebugDraftMut = useMutation(
-    ({ id, debugDraft }: { id: string; debugDraft: string }) =>
+    ({ id, debugDraft, _silent }: { id: string; debugDraft: string; _silent?: boolean }) =>
       apiRegressionApi.endpoints.update(id, { debugDraft }),
     {
       onSuccess: (_, vars) => {
         qc.invalidateQueries("api-endpoints");
-        message.success("调试内容已保存，下次打开将自动恢复");
+        if (!vars._silent) message.success("调试内容已保存，下次打开将自动恢复");
         setLocalEp((prev) => (prev && prev.id === vars.id ? { ...prev, debugDraft: vars.debugDraft } : prev));
       },
       onError: (e: { response?: { data?: { detail?: string } } }) => {
@@ -347,6 +354,26 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     );
   };
 
+  const persistDraftWithResult = (result: ApiDebugResult) => {
+    if (!localEp) return;
+    const v = debugForm.getFieldsValue();
+    const draft = debugFormValuesToDraftJson(v, result);
+    saveDebugDraftMut.mutate({ id: localEp.id, debugDraft: draft, _silent: true });
+    const formPath = String(v.path || "").trim();
+    const formMethod = String(v.method || "GET").toUpperCase();
+    const epChanged: Record<string, string> = {};
+    if (formPath && formPath !== localEp.path) epChanged.path = formPath;
+    if (formMethod !== (localEp.method || "GET").toUpperCase()) epChanged.method = formMethod;
+    const bodyStr = String(v.body || "").trim();
+    if (bodyStr) epChanged.sampleRequest = bodyStr;
+    if (Object.keys(epChanged).length > 0) {
+      updateEpMut.mutate(
+        { id: localEp.id, payload: epChanged },
+        { onSuccess: () => setLocalEp((prev) => prev ? { ...prev, ...epChanged } : prev) }
+      );
+    }
+  };
+
   const debugReq = useMutation(apiRegressionApi.debug.request, {
     onSuccess: (r) => {
       setDebugResult(r);
@@ -355,6 +382,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
       else if (r.assertionsPassed === true) message.success(`断言通过 · ${r.durationMs} ms`);
       else message.success(`完成 ${r.durationMs} ms`);
       autoExtractAndSave(r.responseBody);
+      persistDraftWithResult(r);
     },
     onError: (e: { response?: { data?: { detail?: string } } }) => {
       message.error(e.response?.data?.detail ?? "调试请求失败");
@@ -369,7 +397,8 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
     const timer = setTimeout(() => {
       debugForm.setFieldsValue(merged);
     }, 0);
-    setDebugResult(null);
+    const saved = extractLastDebugResult(localEp.debugDraft);
+    setDebugResult(saved);
     setFormInited(true);
     return () => clearTimeout(timer);
   }, [open, localEp, environments, debugForm, formInited]);
@@ -632,6 +661,46 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                   </Space>
                 ),
               },
+              {
+                key: "apiDoc",
+                label: (
+                  <Typography.Text style={{ fontSize: 13 }}>
+                    <EditOutlined style={{ marginRight: 6 }} />
+                    接口文档
+                    {apiDocDraft.trim() ? <Tag color="blue" style={{ marginLeft: 8 }}>已填写</Tag> : null}
+                  </Typography.Text>
+                ),
+                children: (
+                  <Space direction="vertical" style={{ width: "100%" }} size={8}>
+                    <TextArea
+                      value={apiDocDraft}
+                      onChange={(e) => setApiDocDraft(e.target.value)}
+                      placeholder={"粘贴接口文档：参数说明、响应结构、业务规则等。\n生成测试用例时会作为 LLM 参考信息。\n\n示例：\n请求参数：\n- uid (string, 必填): 用户ID\n- question (string, 必填): 用户问题\n\n响应：{\"code\": 0, \"data\": {...}}"}
+                      rows={8}
+                      style={{ fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    <Button
+                      size="small"
+                      icon={<SaveOutlined />}
+                      loading={updateEpMut.isLoading}
+                      onClick={() => {
+                        if (!localEp) return;
+                        updateEpMut.mutate(
+                          { id: localEp.id, payload: { apiDoc: apiDocDraft } },
+                          {
+                            onSuccess: () => {
+                              setLocalEp((prev) => (prev ? { ...prev, apiDoc: apiDocDraft } : prev));
+                              message.success("接口文档已保存");
+                            },
+                          }
+                        );
+                      }}
+                    >
+                      保存接口文档
+                    </Button>
+                  </Space>
+                ),
+              },
             ]}
           />
           {environments.length === 0 ? (
@@ -741,9 +810,22 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
               onClick={() => {
                 if (!localEp) return;
                 const v = debugForm.getFieldsValue();
+                const formPath = String(v.path || "").trim();
+                const formMethod = String(v.method || "GET").toUpperCase();
+                const epChanged: Record<string, string> = {};
+                if (formPath && formPath !== localEp.path) epChanged.path = formPath;
+                if (formMethod !== (localEp.method || "GET").toUpperCase()) epChanged.method = formMethod;
+                const bodyStr = String(v.body || "").trim();
+                if (bodyStr) epChanged.sampleRequest = bodyStr;
+                if (Object.keys(epChanged).length > 0) {
+                  updateEpMut.mutate(
+                    { id: localEp.id, payload: epChanged },
+                    { onSuccess: () => setLocalEp((prev) => prev ? { ...prev, ...epChanged } : prev) }
+                  );
+                }
                 saveDebugDraftMut.mutate({
                   id: localEp.id,
-                  debugDraft: debugFormValuesToDraftJson(v),
+                  debugDraft: debugFormValuesToDraftJson(v, debugResult),
                 });
               }}
             >
@@ -923,7 +1005,7 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                           : [...existing, { varName, path: jsonPath }];
                         debugForm.setFieldsValue({ extractToEnv: updated });
                         if (localEp) {
-                          const draft = debugFormValuesToDraftJson({ ...debugForm.getFieldsValue(), extractToEnv: updated });
+                          const draft = debugFormValuesToDraftJson({ ...debugForm.getFieldsValue(), extractToEnv: updated }, debugResult);
                           saveDebugDraftMut.mutate({ id: localEp.id, debugDraft: draft });
                         }
                       }}
@@ -947,7 +1029,9 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                               原始 JSON（可拖选文本 → 上方「选中文本 → body_contains」）
                             </Typography.Text>
                           ),
-                          children: (
+                          children: debugResult.responseBody?.trim() && looksLikeHtml(debugResult.responseBody) ? (
+                            <HtmlResponseViewer html={debugResult.responseBody} maxHeight={280} />
+                          ) : (
                             <pre
                               id="debug-response-body-pre"
                               style={{
@@ -977,30 +1061,36 @@ export function EndpointDebugModal({ open, endpoint, onClose }: EndpointDebugMod
                   </>
                 ) : (
                   <>
-                    <Typography.Text type="secondary" style={{ display: "block", marginTop: 4, fontSize: 12 }}>
-                      可在下框中选中文本，再点上方「选中文本 → body_contains 断言」。
-                    </Typography.Text>
-                    <pre
-                      id="debug-response-body-pre"
-                      style={{
-                        marginTop: 6,
-                        maxHeight: 320,
-                        overflow: "auto",
-                        fontSize: 12,
-                        background: "rgba(0,0,0,0.25)",
-                        padding: 8,
-                        borderRadius: 6,
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        userSelect: "text",
-                      }}
-                    >
-                      {debugResult.responseBody?.trim()
-                        ? formatDebugResponseBody(debugResult.responseBody)
-                        : debugResult.responseByteLength != null && debugResult.responseByteLength > 0
-                          ? "（无法以 UTF-8 文本展示，可能为二进制或非文本编码；已记录字节数见上方）"
-                          : "（无响应体）"}
-                    </pre>
+                    {debugResult.responseBody?.trim() && looksLikeHtml(debugResult.responseBody) ? (
+                      <HtmlResponseViewer html={debugResult.responseBody} maxHeight={320} />
+                    ) : (
+                      <>
+                        <Typography.Text type="secondary" style={{ display: "block", marginTop: 4, fontSize: 12 }}>
+                          可在下框中选中文本，再点上方「选中文本 → body_contains 断言」。
+                        </Typography.Text>
+                        <pre
+                          id="debug-response-body-pre"
+                          style={{
+                            marginTop: 6,
+                            maxHeight: 320,
+                            overflow: "auto",
+                            fontSize: 12,
+                            background: "rgba(0,0,0,0.25)",
+                            padding: 8,
+                            borderRadius: 6,
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                            userSelect: "text",
+                          }}
+                        >
+                          {debugResult.responseBody?.trim()
+                            ? formatDebugResponseBody(debugResult.responseBody)
+                            : debugResult.responseByteLength != null && debugResult.responseByteLength > 0
+                              ? "（无法以 UTF-8 文本展示，可能为二进制或非文本编码；已记录字节数见上方）"
+                              : "（无响应体）"}
+                        </pre>
+                      </>
+                    )}
                   </>
                 )}
               </div>
