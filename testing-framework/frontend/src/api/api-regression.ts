@@ -8,6 +8,8 @@ export interface ApiEnvironment {
   variables: string;
   /** 调试「自动提取到环境」写入的 JSON；与 variables 合并参与请求，同名时 variables 优先 */
   autoExtractedVariables?: string;
+  /** 企业微信机器人 Webhook URL，留空则不发通知 */
+  webhookUrl?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -17,6 +19,7 @@ export type ApiEnvironmentUpdateBody = Partial<{
   baseUrl: string;
   variables: string;
   autoExtractedVariables: string;
+  webhookUrl: string;
 }>;
 
 export interface ApiCollection {
@@ -88,6 +91,7 @@ export interface ApiScheduleRow {
   environmentId: string;
   collectionId: string;
   enabled: boolean;
+  skipHoliday?: boolean;
 }
 
 export interface ApiDebugResult {
@@ -235,8 +239,11 @@ export const apiRegressionApi = {
       collectionId: string;
       regressionMode?: string;
       enabled?: boolean;
+      skipHoliday?: boolean;
     }) => api.post("/api-regression/schedules", body).then((r) => r.data),
     delete: (id: string) => api.delete(`/api-regression/schedules/${id}`).then((r) => r.data),
+    update: (id: string, body: Partial<Omit<ApiScheduleRow, "id">>) =>
+      api.put(`/api-regression/schedules/${id}`, body).then((r) => r.data),
   },
   generate: {
     startSingleApiTests: (body: { endpointIds: string[]; environmentId?: string; globalPrompt?: string }) =>
@@ -289,3 +296,65 @@ export interface ExploreJobStatus {
   result?: GenJobResult;
   error?: string;
 }
+
+// ── TAPD 缺陷管理 ──────────────────────────────
+
+export interface TapdBugFilters {
+  title?: string;
+  creator?: string;
+  current_owner?: string;
+  status?: string;
+  priority?: string;
+  severity?: string;
+}
+
+export interface TapdMetric {
+  label: string;
+  color: string;
+  countParams: Record<string, string>;
+  timeField: string | null;
+}
+
+export interface TapdReportTemplate {
+  id: string;
+  name: string;
+  description: string;
+  builtIn: boolean;
+  metrics: TapdMetric[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TapdBugReportConfig {
+  id: string;
+  name: string;
+  webhookUrl: string;
+  templateId?: string | null;
+  filters: TapdBugFilters;
+  cronExpression: string;
+  enabled: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export const tapdBugApi = {
+  templates: {
+    list: () => api.get<TapdReportTemplate[]>("/tapd-bug/templates").then((r) => r.data),
+    create: (body: Partial<TapdReportTemplate>) =>
+      api.post<TapdReportTemplate>("/tapd-bug/templates", body).then((r) => r.data),
+    update: (id: string, body: Partial<TapdReportTemplate>) =>
+      api.put<TapdReportTemplate>(`/tapd-bug/templates/${id}`, body).then((r) => r.data),
+    delete: (id: string) => api.delete(`/tapd-bug/templates/${id}`).then((r) => r.data),
+  },
+  configs: {
+    list: () => api.get<TapdBugReportConfig[]>("/tapd-bug/configs").then((r) => r.data),
+    create: (body: Partial<TapdBugReportConfig>) =>
+      api.post<TapdBugReportConfig>("/tapd-bug/configs", body).then((r) => r.data),
+    update: (id: string, body: Partial<TapdBugReportConfig>) =>
+      api.put<TapdBugReportConfig>(`/tapd-bug/configs/${id}`, body).then((r) => r.data),
+    delete: (id: string) => api.delete(`/tapd-bug/configs/${id}`).then((r) => r.data),
+    send: (id: string) => api.post(`/tapd-bug/configs/${id}/send`).then((r) => r.data),
+  },
+  preview: (body: { filters?: TapdBugFilters; templateId?: string; metrics?: TapdMetric[] }) =>
+    api.post("/tapd-bug/preview", body).then((r) => r.data),
+};

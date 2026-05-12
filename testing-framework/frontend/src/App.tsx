@@ -7,6 +7,7 @@ import {
   UnorderedListOutlined,
   ExportOutlined,
   ApiOutlined,
+  BugOutlined,
 } from "@ant-design/icons";
 import Dashboard from "./pages/Dashboard";
 import RequirementList from "./pages/RequirementList";
@@ -21,6 +22,7 @@ import ApiRegressionCollectionDetail from "./pages/ApiRegressionCollectionDetail
 import ApiRegressionRuns from "./pages/ApiRegressionRuns";
 import ApiRegressionRunDetail from "./pages/ApiRegressionRunDetail";
 import ApiRegressionSchedules from "./pages/ApiRegressionSchedules";
+import TapdBugReport from "./pages/TapdBugReport";
 
 const { Sider, Content } = Layout;
 
@@ -32,12 +34,18 @@ const API_TEST_PREFIXES = [
   "/api-tests/schedules",
 ] as const;
 
+const TAPD_PREFIXES = ["/tapd/bug-report"] as const;
+
 function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [openKeys, setOpenKeys] = useState<string[]>(() =>
-    location.pathname.startsWith("/api-tests") ? ["api-tests-group"] : []
-  );
+  const [openKeys, setOpenKeys] = useState<string[]>(() => {
+    const p = location.pathname;
+    const keys: string[] = [];
+    if (p.startsWith("/api-tests")) keys.push("api-tests-group");
+    if (p.startsWith("/tapd")) keys.push("tapd-group");
+    return keys;
+  });
 
   const selectedKeys = useMemo(() => {
     const p = location.pathname;
@@ -46,6 +54,12 @@ function AppLayout() {
         if (p === prefix || p.startsWith(prefix + "/")) return [prefix];
       }
       return ["/api-tests/environments"];
+    }
+    if (p.startsWith("/tapd")) {
+      for (const prefix of TAPD_PREFIXES) {
+        if (p === prefix || p.startsWith(prefix + "/")) return [prefix];
+      }
+      return ["/tapd/bug-report"];
     }
     const top = p === "/" ? "/" : "/" + (p.split("/")[1] || "");
     return [top];
@@ -66,6 +80,14 @@ function AppLayout() {
         { key: "/api-tests/collections", label: "集合" },
         { key: "/api-tests/runs", label: "运行历史" },
         { key: "/api-tests/schedules", label: "定时任务" },
+      ],
+    },
+    {
+      key: "tapd-group",
+      icon: <BugOutlined />,
+      label: "TAPD 缺陷管理",
+      children: [
+        { key: "/tapd/bug-report", label: "缺陷日报" },
       ],
     },
   ];
@@ -131,6 +153,7 @@ export default function App() {
         <Route path="api-tests/runs" element={<ApiRegressionRuns />} />
         <Route path="api-tests/runs/:id" element={<ApiRegressionRunDetail />} />
         <Route path="api-tests/schedules" element={<ApiRegressionSchedules />} />
+        <Route path="tapd/bug-report" element={<TapdBugReport />} />
       </Route>
     </Routes>
   );

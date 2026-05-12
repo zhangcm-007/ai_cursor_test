@@ -5,14 +5,16 @@ import logging
 import threading
 import time
 import uuid
+from datetime import datetime
 from typing import Any, Optional, TypedDict
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-from app.config import API_REGRESSION_TRIGGER_KEY
+from app.config import API_REGRESSION_TRIGGER_KEY, REPORT_BASE_URL
 from app.database import SessionLocal, get_db
 from app.db_types import utc_naive_now
 from app.models_api import (
@@ -137,6 +139,7 @@ def _serialize_environment(e: ApiEnvironment) -> dict[str, Any]:
         "baseUrl": e.baseUrl,
         "variables": e.variables,
         "autoExtractedVariables": getattr(e, "autoExtractedVariables", None) or "{}",
+        "webhookUrl": getattr(e, "webhookUrl", None) or "",
         "createdAt": e.createdAt,
         "updatedAt": e.updatedAt,
     }
@@ -160,6 +163,7 @@ def create_environment(body: dict, db: Session = Depends(get_db)):
         baseUrl=base_url,
         variables=_env_json_field(body, "variables", {}),
         autoExtractedVariables=_env_json_field(body, "autoExtractedVariables", {}),
+        webhookUrl=str(body.get("webhookUrl") or "").strip(),
     )
     db.add(e)
     db.commit()
@@ -188,6 +192,8 @@ def update_environment(eid: str, body: dict, db: Session = Depends(get_db)):
         e.variables = _env_json_field(body, "variables", {})
     if "autoExtractedVariables" in body:
         e.autoExtractedVariables = _env_json_field(body, "autoExtractedVariables", {})
+    if "webhookUrl" in body:
+        e.webhookUrl = str(body["webhookUrl"] or "").strip()
     e.updatedAt = utc_naive_now()
     db.commit()
     db.refresh(e)
@@ -986,6 +992,111 @@ def _report_markdown(r: ApiRun, db: Session) -> str:
     return "\n".join(lines)
 
 
+def _report_html(r: ApiRun, db: Session) -> str:
+    data = _serialize_run(r, db)
+    status = data["status"]
+    is_passed = status == "PASSED"
+    status_color = "#52c41a" if is_passed else "#ff4d4f"
+    status_text = "全部通过" if is_passed else "存在失败"
+
+    total = len(data["steps"])
+    passed_count = sum(1 for s in data["steps"] if s["passed"])
+    failed_count = total - passed_count
+
+    step_rows = []
+    for s in data["steps"]:
+        p = s["passed"]
+        row_bg = "#f6ffed" if p else "#fff2f0"
+        badge = '<span style="color:#52c41a">&#10004; 通过</span>' if p else '<span style="color:#ff4d4f">&#10008; 失败</span>'
+        err_html = ""
+        if s["error"]:
+            err_html = f'<div style="color:#ff4d4f;margin-top:4px;font-size:13px"><b>错误:</b> {_html_escape(s["error"])}</div>'
+
+        assertions_html = ""
+        if s.get("assertionResults"):
+            a_items = []
+            for ar in s["assertionResults"]:
+                a_color = "#52c41a" if ar.get("passed") else "#ff4d4f"
+                a_icon = "&#10004;" if ar.get("passed") else "&#10008;"
+                a_msg = _html_escape(ar.get("message") or ar.get("type", ""))
+                a_items.append(f'<li style="color:{a_color}">{a_icon} {a_msg}</li>')
+            if a_items:
+                assertions_html = f'<ul style="margin:4px 0 0 0;padding-left:18px;font-size:12px">{"".join(a_items)}</ul>'
+
+        resp_body = s.get("responseBodyMasked") or ""
+        resp_preview = resp_body[:2000] + ("..." if len(resp_body) > 2000 else "")
+
+        req_body = s.get("requestBodyMasked") or ""
+        req_preview = req_body[:1000] + ("..." if len(req_body) > 1000 else "")
+
+        step_rows.append(f"""
+        <tr style="background:{row_bg}">
+          <td style="padding:8px;border:1px solid #f0f0f0;text-align:center">{s['orderIndex']}</td>
+          <td style="padding:8px;border:1px solid #f0f0f0">{_html_escape(s['name'])}</td>
+          <td style="padding:8px;border:1px solid #f0f0f0"><code>{s['requestMethod']}</code> {_html_escape(s['requestUrl'])}</td>
+          <td style="padding:8px;border:1px solid #f0f0f0;text-align:center">{s['statusCode'] or '-'}</td>
+          <td style="padding:8px;border:1px solid #f0f0f0;text-align:center">{s.get('durationMs') or '-'} ms</td>
+          <td style="padding:8px;border:1px solid #f0f0f0;text-align:center">{badge}</td>
+        </tr>
+        <tr style="background:{row_bg}">
+          <td colspan="6" style="padding:4px 8px;border:1px solid #f0f0f0;font-size:12px">
+            {err_html}
+            {assertions_html}
+            <details style="margin-top:4px"><summary style="cursor:pointer;color:#1677ff;font-size:12px">请求参数</summary><pre style="background:#fafafa;padding:6px;max-height:200px;overflow:auto;font-size:11px">{_html_escape(req_preview)}</pre></details>
+            <details style="margin-top:2px"><summary style="cursor:pointer;color:#1677ff;font-size:12px">响应内容</summary><pre style="background:#fafafa;padding:6px;max-height:300px;overflow:auto;font-size:11px">{_html_escape(resp_preview)}</pre></details>
+          </td>
+        </tr>""")
+
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>接口回归报告 - {_html_escape(data['id'][:8])}</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; color: #333; }}
+    .container {{ max-width: 1200px; margin: 0 auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.08); padding: 24px; }}
+    h1 {{ font-size: 22px; margin: 0 0 16px 0; }}
+    .summary {{ display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }}
+    .summary-item {{ background: #fafafa; border-radius: 6px; padding: 10px 16px; min-width: 140px; }}
+    .summary-item .label {{ font-size: 12px; color: #999; margin-bottom: 2px; }}
+    .summary-item .value {{ font-size: 15px; font-weight: 600; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+    th {{ background: #fafafa; padding: 10px 8px; border: 1px solid #f0f0f0; text-align: left; font-weight: 600; }}
+    pre {{ white-space: pre-wrap; word-break: break-all; margin: 0; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>接口回归测试报告</h1>
+    <div class="summary">
+      <div class="summary-item"><div class="label">状态</div><div class="value" style="color:{status_color}">{status_text}</div></div>
+      <div class="summary-item"><div class="label">通过/总计</div><div class="value">{passed_count}/{total}</div></div>
+      <div class="summary-item"><div class="label">失败</div><div class="value" style="color:{'#ff4d4f' if failed_count else '#52c41a'}">{failed_count}</div></div>
+      <div class="summary-item"><div class="label">环境</div><div class="value">{_html_escape(data['environmentName'])}</div></div>
+      <div class="summary-item"><div class="label">Base URL</div><div class="value" style="font-size:12px">{_html_escape(data['baseUrlSnapshot'])}</div></div>
+      <div class="summary-item"><div class="label">开始时间</div><div class="value" style="font-size:13px">{data['startedAt']}</div></div>
+      <div class="summary-item"><div class="label">结束时间</div><div class="value" style="font-size:13px">{data['finishedAt']}</div></div>
+    </div>
+    {f'<div style="background:#fff2f0;border:1px solid #ffccc7;border-radius:6px;padding:10px 14px;margin-bottom:16px;color:#ff4d4f"><b>错误摘要:</b> {_html_escape(data["errorMessage"])}</div>' if data['errorMessage'] else ''}
+    <table>
+      <thead><tr>
+        <th style="width:40px">#</th><th>名称</th><th>请求</th><th style="width:70px">状态码</th><th style="width:80px">耗时</th><th style="width:70px">结果</th>
+      </tr></thead>
+      <tbody>{"".join(step_rows)}</tbody>
+    </table>
+    <div style="margin-top:16px;font-size:12px;color:#999;text-align:center">Run ID: {data['id']} | 回归模式: {data['regressionMode']}</div>
+  </div>
+</body>
+</html>"""
+
+
+def _html_escape(s: str | None) -> str:
+    if not s:
+        return ""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 @router.get("/runs/{rid}/report")
 def get_run_report(rid: str, format: str = "md", db: Session = Depends(get_db)):
     r = db.query(ApiRun).filter(ApiRun.id == rid).first()
@@ -995,7 +1106,11 @@ def get_run_report(rid: str, format: str = "md", db: Session = Depends(get_db)):
         from fastapi.responses import PlainTextResponse
 
         return PlainTextResponse(_report_markdown(r, db), media_type="text/markdown; charset=utf-8")
-    raise HTTPException(400, detail="format 仅支持 md")
+    if format == "html":
+        from fastapi.responses import HTMLResponse
+
+        return HTMLResponse(_report_html(r, db))
+    raise HTTPException(400, detail="format 仅支持 md / html")
 
 
 # --- Webhook ---
@@ -1020,7 +1135,7 @@ def trigger_webhook(
 
 @router.get("/schedules")
 def list_schedules(db: Session = Depends(get_db)):
-    rows = db.query(ApiRegressionSchedule).order_by(ApiRegressionSchedule.updatedAt.desc()).all()
+    rows = db.query(ApiRegressionSchedule).order_by(ApiRegressionSchedule.createdAt.desc()).all()
     return [
         {
             "id": s.id,
@@ -1030,6 +1145,7 @@ def list_schedules(db: Session = Depends(get_db)):
             "environmentId": s.environmentId,
             "collectionId": s.collectionId,
             "enabled": s.enabled,
+            "skipHoliday": s.skipHoliday,
         }
         for s in rows
     ]
@@ -1054,11 +1170,56 @@ def create_schedule(body: dict, db: Session = Depends(get_db)):
         environmentId=env_id,
         collectionId=col_id,
         enabled=bool(body.get("enabled", True)),
+        skipHoliday=bool(body.get("skipHoliday", False)),
     )
     db.add(s)
     db.commit()
     db.refresh(s)
+
+    if _active_scheduler:
+        try:
+            _add_schedule_to_scheduler(s, _active_scheduler)
+        except Exception as e:
+            print(f"[scheduler] failed to register new job: {e}")
+
     return {"id": s.id}
+
+
+@router.put("/schedules/{sid}")
+def update_schedule(sid: str, body: dict, db: Session = Depends(get_db)):
+    s = db.query(ApiRegressionSchedule).filter(ApiRegressionSchedule.id == sid).first()
+    if not s:
+        raise HTTPException(404, detail="Not found")
+
+    old_enabled = s.enabled
+    old_cron = s.cronExpression
+
+    for field in ("name", "cronExpression", "regressionMode", "environmentId", "collectionId"):
+        if field in body:
+            setattr(s, field, body[field])
+    if "enabled" in body:
+        s.enabled = bool(body["enabled"])
+    if "skipHoliday" in body:
+        s.skipHoliday = bool(body["skipHoliday"])
+
+    db.commit()
+    db.refresh(s)
+
+    if _active_scheduler:
+        cron_or_params_changed = (
+            s.cronExpression != old_cron
+            or s.environmentId != body.get("environmentId", s.environmentId)
+            or s.collectionId != body.get("collectionId", s.collectionId)
+        )
+        if not s.enabled:
+            _remove_schedule_from_scheduler(sid, _active_scheduler)
+        elif s.enabled and (not old_enabled or cron_or_params_changed):
+            try:
+                _add_schedule_to_scheduler(s, _active_scheduler)
+            except Exception as e:
+                print(f"[scheduler] failed to re-register job: {e}")
+
+    return {"ok": True}
 
 
 @router.delete("/schedules/{sid}")
@@ -1068,6 +1229,9 @@ def delete_schedule(sid: str, db: Session = Depends(get_db)):
         raise HTTPException(404, detail="Not found")
     db.delete(s)
     db.commit()
+
+    if _active_scheduler:
+        _remove_schedule_from_scheduler(sid, _active_scheduler)
     return {"ok": True}
 
 
@@ -1208,61 +1372,213 @@ def explore_api_tests_progress(job_id: str):
     return payload
 
 
+def _is_chinese_holiday(dt: datetime) -> bool:
+    """通过免费公共 API 判断是否为中国法定节假日。
+    接口：https://timor.tech/api/holiday/info/{date}
+    返回 {"type":{"type":0..3}} — 0=工作日, 1=周末, 2=节假日, 3=调休工作日
+    如果 API 不可用则保守返回 False（不跳过）。
+    """
+    import httpx
+    try:
+        date_str = dt.strftime("%Y-%m-%d")
+        r = httpx.get(f"https://timor.tech/api/holiday/info/{date_str}", timeout=5)
+        if r.status_code == 200:
+            data = r.json()
+            day_type = data.get("type", {}).get("type", 0)
+            return day_type in (1, 2)
+    except Exception:
+        pass
+    return False
+
+
+def _send_wecom_notification(
+    webhook_url: str,
+    schedule_name: str,
+    run: ApiRun,
+    db: Session,
+) -> None:
+    """运行结束后向企业微信机器人 Webhook 发送 markdown 消息。"""
+    import httpx
+
+    data = _serialize_run(run, db)
+    status = data["status"]
+    is_passed = status == "PASSED"
+    total = len(data["steps"])
+    passed_count = sum(1 for s in data["steps"] if s["passed"])
+
+    report_link = ""
+    if REPORT_BASE_URL:
+        report_link = f"{REPORT_BASE_URL}/api-regression/runs/{run.id}/report?format=html"
+
+    lines = [f"**接口回归测试通知**"]
+
+    if is_passed:
+        lines.append(f"> 定时任务: {schedule_name}")
+        lines.append(f'> 状态: <font color="info">全部通过</font>')
+        lines.append(f"> 步骤: {passed_count}/{total} 通过")
+    else:
+        failed_steps = [s for s in data["steps"] if not s["passed"]]
+        lines.append(f"> 定时任务: {schedule_name}")
+        lines.append(f'> 状态: <font color="warning">存在失败 ({total - passed_count}/{total})</font>')
+        lines.append(f"> 通过: {passed_count}/{total}")
+        lines.append(f"> ")
+        lines.append(f"> **失败用例:**")
+        for i, fs in enumerate(failed_steps[:10], 1):
+            err = (fs.get("error") or "未知错误")[:120]
+            lines.append(f"> {i}. {fs['name']} — {err}")
+        if len(failed_steps) > 10:
+            lines.append(f"> ...共 {len(failed_steps)} 个失败用例")
+
+    if report_link:
+        lines.append(f"> ")
+        lines.append(f"> [查看测试报告]({report_link})")
+
+    content = "\n".join(lines)
+
+    try:
+        r = httpx.post(
+            webhook_url,
+            json={"msgtype": "markdown", "markdown": {"content": content}},
+            timeout=10,
+        )
+        print(f"[wecom] notification sent: status={r.status_code} schedule={schedule_name} run={run.id}")
+    except Exception as e:
+        print(f"[wecom] notification failed: {e}")
+
+
+_active_scheduler: Any = None
+
+
+def _make_schedule_job(
+    environment_id: str,
+    collection_id: str,
+    regression_mode: str,
+    should_skip_holiday: bool,
+    schedule_name: str = "",
+):
+    def job() -> None:
+        if should_skip_holiday and _is_chinese_holiday(datetime.now()):
+            print(f"[scheduler] skipping job for {collection_id}: today is a holiday")
+            return
+
+        sdb = SessionLocal()
+        try:
+            env = sdb.query(ApiEnvironment).filter(ApiEnvironment.id == environment_id).first()
+            col = sdb.query(ApiCollection).filter(ApiCollection.id == collection_id).first()
+            if not env or not col:
+                return
+            run = ApiRun(
+                id=new_id(),
+                status="RUNNING",
+                triggeredBy="schedule",
+                regressionMode=regression_mode,
+                environmentId=env.id,
+                environmentName=env.name,
+                baseUrlSnapshot=env.baseUrl,
+                collectionId=col.id,
+                startedAt=utc_naive_now(),
+            )
+            sdb.add(run)
+            sdb.commit()
+            sdb.refresh(run)
+            execute_run(sdb, run, col, env, {})
+
+            sdb.refresh(run)
+            webhook_url = getattr(env, "webhookUrl", None) or ""
+            if webhook_url:
+                try:
+                    _send_wecom_notification(webhook_url, schedule_name, run, sdb)
+                except Exception as e:
+                    print(f"[scheduler] wecom notification error: {e}")
+        finally:
+            sdb.close()
+
+    return job
+
+
+def _add_schedule_to_scheduler(s: ApiRegressionSchedule, scheduler: Any) -> bool:
+    """将单个定时任务注册到 APScheduler，成功返回 True。"""
+    from apscheduler.triggers.cron import CronTrigger
+
+    expr = s.cronExpression.strip()
+    parts = expr.split()
+    if len(parts) != 5:
+        return False
+    trigger = CronTrigger.from_crontab(expr)
+    job_fn = _make_schedule_job(
+        s.environmentId, s.collectionId, s.regressionMode, s.skipHoliday,
+        schedule_name=s.name,
+    )
+    scheduler.add_job(
+        job_fn,
+        trigger,
+        id=f"api-regression-{s.id}",
+        replace_existing=True,
+    )
+    print(f"[scheduler] registered job api-regression-{s.id} with cron={expr}")
+    return True
+
+
+def _remove_schedule_from_scheduler(schedule_id: str, scheduler: Any) -> None:
+    job_id = f"api-regression-{schedule_id}"
+    try:
+        scheduler.remove_job(job_id)
+        print(f"[scheduler] removed job {job_id}")
+    except Exception:
+        pass
+
+
 def register_scheduled_jobs(scheduler: Any) -> None:
     """由 main 在启动时调用，传入 BackgroundScheduler。"""
-    from apscheduler.triggers.cron import CronTrigger
+    global _active_scheduler
+    _active_scheduler = scheduler
 
     db = SessionLocal()
     try:
-        rows = db.query(ApiRegressionSchedule).filter(ApiRegressionSchedule.enabled.is_(True)).all()
+        _auto_migrate_webhook_url(db)
+
+        try:
+            rows = db.query(ApiRegressionSchedule).filter(ApiRegressionSchedule.enabled.is_(True)).all()
+        except Exception as e:
+            print(f"[scheduler] ERROR querying schedules (DB migration needed?): {e}")
+            _auto_migrate_skip_holiday(db)
+            rows = db.query(ApiRegressionSchedule).filter(ApiRegressionSchedule.enabled.is_(True)).all()
+
+        print(f"[scheduler] found {len(rows)} enabled schedule(s)")
+        registered = 0
         for s in rows:
             try:
-                expr = s.cronExpression.strip()
-                parts = expr.split()
-                if len(parts) != 5:
-                    continue
-                trigger = CronTrigger.from_crontab(expr)
-                eid, cid, mode = s.environmentId, s.collectionId, s.regressionMode
-
-                def make_job(
-                    environment_id: str = eid,
-                    collection_id: str = cid,
-                    regression_mode: str = mode,
-                ):
-                    def job() -> None:
-                        sdb = SessionLocal()
-                        try:
-                            env = sdb.query(ApiEnvironment).filter(ApiEnvironment.id == environment_id).first()
-                            col = sdb.query(ApiCollection).filter(ApiCollection.id == collection_id).first()
-                            if not env or not col:
-                                return
-                            run = ApiRun(
-                                id=new_id(),
-                                status="RUNNING",
-                                triggeredBy="schedule",
-                                regressionMode=regression_mode,
-                                environmentId=env.id,
-                                environmentName=env.name,
-                                baseUrlSnapshot=env.baseUrl,
-                                collectionId=col.id,
-                                startedAt=utc_naive_now(),
-                            )
-                            sdb.add(run)
-                            sdb.commit()
-                            sdb.refresh(run)
-                            execute_run(sdb, run, col, env, {})
-                        finally:
-                            sdb.close()
-
-                    return job
-
-                scheduler.add_job(
-                    make_job(),
-                    trigger,
-                    id=f"api-regression-{s.id}",
-                    replace_existing=True,
-                )
-            except Exception:
+                if _add_schedule_to_scheduler(s, scheduler):
+                    registered += 1
+            except Exception as e:
+                print(f"[scheduler] ERROR registering job for schedule {s.id}: {e}")
                 continue
+        print(f"[scheduler] registered {registered}/{len(rows)} job(s)")
     finally:
         db.close()
+
+
+def _auto_migrate_skip_holiday(db: Session) -> None:
+    """自动添加 skipHoliday 列（如果不存在）。"""
+    try:
+        db.execute(text(
+            "ALTER TABLE ApiRegressionSchedule ADD COLUMN skipHoliday BOOLEAN DEFAULT 0"
+        ))
+        db.commit()
+        print("[scheduler] auto-migrated: added skipHoliday column")
+    except Exception:
+        db.rollback()
+
+
+def _auto_migrate_webhook_url(db: Session) -> None:
+    """自动添加 webhookUrl 列（如果不存在）。"""
+    try:
+        db.execute(text(
+            "ALTER TABLE ApiEnvironment ADD COLUMN webhookUrl TEXT DEFAULT ''"
+        ))
+        db.commit()
+        print("[auto-migrate] added webhookUrl column to ApiEnvironment")
+    except Exception:
+        db.rollback()
+
+

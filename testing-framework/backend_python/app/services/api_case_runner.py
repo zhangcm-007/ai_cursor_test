@@ -558,6 +558,7 @@ def execute_run(
     ctx: dict[str, str] = {}
     ctx.update(merged_environment_variables_dict(env))
     ctx.update({k: str(v) for k, v in run_variables.items()})
+    _pre_resolve_ctx(ctx)
 
     run_started = time.monotonic()
     overall_ok = True

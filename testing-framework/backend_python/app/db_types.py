@@ -8,7 +8,8 @@ from sqlalchemy.types import Integer, TypeDecorator
 
 
 def utc_naive_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    """返回本地时间（naive datetime），名称保留以兼容已有调用。"""
+    return datetime.now()
 
 
 class PrismaSQLiteDateTime(TypeDecorator):
@@ -21,11 +22,8 @@ class PrismaSQLiteDateTime(TypeDecorator):
         if value is None:
             return None
         if isinstance(value, datetime):
-            if value.tzinfo is not None:
-                v = value.astimezone(timezone.utc)
-            else:
-                v = value.replace(tzinfo=timezone.utc)
-            return int(v.timestamp() * 1000)
+            # .timestamp() 对 naive datetime 按本地时区处理，对 aware datetime 直接转换
+            return int(value.timestamp() * 1000)
         if isinstance(value, (int, float)):
             return int(value)
         return value
@@ -36,7 +34,7 @@ class PrismaSQLiteDateTime(TypeDecorator):
         if isinstance(value, datetime):
             return value
         if isinstance(value, (int, float)):
-            return datetime.fromtimestamp(float(value) / 1000.0, tz=timezone.utc).replace(tzinfo=None)
+            return datetime.fromtimestamp(float(value) / 1000.0)
         if isinstance(value, str):
             s = value.strip().replace("Z", "+00:00")
             try:
@@ -44,6 +42,6 @@ class PrismaSQLiteDateTime(TypeDecorator):
             except ValueError:
                 return value
             if dt.tzinfo is not None:
-                return dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return datetime.fromtimestamp(dt.timestamp())
             return dt
         return value

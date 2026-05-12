@@ -20,6 +20,7 @@ class ApiEnvironment(Base):
     baseUrl: Mapped[str] = mapped_column("baseUrl", String)
     variables: Mapped[str] = mapped_column(String, default="{}")
     autoExtractedVariables: Mapped[str] = mapped_column("autoExtractedVariables", String, default="{}")
+    webhookUrl: Mapped[str] = mapped_column("webhookUrl", String, default="")
     createdAt: Mapped[datetime] = mapped_column(
         "createdAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now
     )
@@ -85,6 +86,7 @@ class ApiRegressionSchedule(Base):
     environmentId: Mapped[str] = mapped_column("environmentId", String, ForeignKey("ApiEnvironment.id", ondelete="CASCADE"))
     collectionId: Mapped[str] = mapped_column("collectionId", String, ForeignKey("ApiCollection.id", ondelete="CASCADE"))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    skipHoliday: Mapped[bool] = mapped_column("skipHoliday", Boolean, default=False)
     createdAt: Mapped[datetime] = mapped_column(
         "createdAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now
     )
@@ -140,3 +142,39 @@ class ApiRunStep(Base):
     durationMs: Mapped[Optional[int]] = mapped_column("durationMs", Integer, nullable=True)
 
     run: Mapped["ApiRun"] = relationship(back_populates="steps")
+
+
+class TapdReportTemplate(Base):
+    """报表模板：定义日报中要统计的指标及其查询条件。"""
+    __tablename__ = "TapdReportTemplate"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, default="")
+    description: Mapped[str] = mapped_column(String, default="")
+    builtIn: Mapped[bool] = mapped_column("builtIn", Boolean, default=False)
+    metrics: Mapped[str] = mapped_column("metrics", Text, default="[]")
+    createdAt: Mapped[datetime] = mapped_column(
+        "createdAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now
+    )
+    updatedAt: Mapped[datetime] = mapped_column(
+        "updatedAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now, onupdate=utc_naive_now
+    )
+
+
+class TapdBugReportConfig(Base):
+    """TAPD 缺陷日报配置：每条记录代表一个独立的定时推送任务。"""
+    __tablename__ = "TapdBugReportConfig"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, default="")
+    webhookUrl: Mapped[str] = mapped_column("webhookUrl", String, default="")
+    templateId: Mapped[Optional[str]] = mapped_column("templateId", String, nullable=True)
+    filters: Mapped[str] = mapped_column("filters", Text, default="{}")
+    cronExpression: Mapped[str] = mapped_column("cronExpression", String, default="0 18 * * 1-5")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    createdAt: Mapped[datetime] = mapped_column(
+        "createdAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now
+    )
+    updatedAt: Mapped[datetime] = mapped_column(
+        "updatedAt", PrismaSQLiteDateTime(), nullable=False, default=utc_naive_now, onupdate=utc_naive_now
+    )

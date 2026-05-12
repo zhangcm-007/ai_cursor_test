@@ -42,6 +42,16 @@ const GRID_COLS_DRAG = `28px ${COLS_CORE} 60px`;
 const GRID_COLS_WITH_DEBUG = `${COLS_CORE} 140px`;
 const GRID_COLS_DRAG_DEBUG = `28px ${COLS_CORE} 140px 60px`;
 
+function remapIndex(idx: number, from: number, to: number): number {
+  if (idx === from) return to;
+  if (from < to) {
+    if (idx > from && idx <= to) return idx - 1;
+  } else {
+    if (idx >= to && idx < from) return idx + 1;
+  }
+  return idx;
+}
+
 function isHttpDebuggableEndpoint(ep: ApiEndpoint): boolean {
   const p = (ep.protocol || "http").toLowerCase();
   return p === "http" || p === "https";
@@ -168,6 +178,7 @@ export function CollectionStepsTable({
   onDebugEndpoint,
   onRunSingleStep,
   debugResult,
+  onReorderSteps,
   environmentId,
   onSyncToEnv,
   syncLoading,
@@ -180,6 +191,7 @@ export function CollectionStepsTable({
   onDebugEndpoint?: (ep: ApiEndpoint) => void;
   onRunSingleStep?: (stepJsonIndex: number) => Promise<ApiDebugChainResult>;
   debugResult?: ApiDebugChainResult | null;
+  onReorderSteps?: (fromIdx: number, toIdx: number) => void;
   environmentId?: string;
   onSyncToEnv?: (vars: Record<string, string>) => void;
   syncLoading?: boolean;
@@ -221,8 +233,30 @@ export function CollectionStepsTable({
 
   const handleDrop = (targetJsonIdx: number) => {
     if (dragIdx === null || dragIdx === targetJsonIdx || !onDefinitionChange) return;
-    const next = reorderStepsInDefinition(definitionRaw, dragIdx, targetJsonIdx);
-    if (next !== definitionRaw) onDefinitionChange(next);
+    const from = dragIdx;
+    const to = targetJsonIdx;
+    const next = reorderStepsInDefinition(definitionRaw, from, to);
+    if (next !== definitionRaw) {
+      onDefinitionChange(next);
+      onReorderSteps?.(from, to);
+
+      setSingleStepResults((prev) => {
+        if (!Object.keys(prev).length) return prev;
+        const remapped: Record<number, ApiDebugChainResult["steps"][number]> = {};
+        for (const [kStr, v] of Object.entries(prev)) {
+          const k = Number(kStr);
+          remapped[remapIndex(k, from, to)] = v;
+        }
+        return remapped;
+      });
+
+      setExpandedIdx((prev) => {
+        if (!prev.size) return prev;
+        const remapped = new Set<number>();
+        for (const k of prev) remapped.add(remapIndex(k, from, to));
+        return remapped;
+      });
+    }
     setDragIdx(null);
   };
 

@@ -204,6 +204,19 @@ export default function ApiRegressionCollectionDetail() {
     [autoSaveDefinition],
   );
 
+  const handleReorderSteps = useCallback(
+    (from: number, to: number) => {
+      setDebugResult((prev) => {
+        if (!prev?.steps?.length) return prev;
+        const newSteps = [...prev.steps];
+        const [item] = newSteps.splice(from, 1);
+        newSteps.splice(to, 0, item);
+        return { ...prev, steps: newSteps };
+      });
+    },
+    [],
+  );
+
   const syncDraftsMut = useMutation(
     () => apiRegressionApi.collections.syncStepsFromDrafts(id!),
     {
@@ -418,6 +431,7 @@ export default function ApiRegressionCollectionDetail() {
           }}
           onRunSingleStep={debugEnvId ? handleRunSingleStep : undefined}
           debugResult={debugResult}
+          onReorderSteps={handleReorderSteps}
           environmentId={debugEnvId}
           onSyncToEnv={handleSyncToEnv}
           syncLoading={syncToEnvMut.isLoading}

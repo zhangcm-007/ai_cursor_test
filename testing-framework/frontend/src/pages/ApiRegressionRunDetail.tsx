@@ -74,6 +74,16 @@ export default function ApiRegressionRunDetail() {
                 ) : null}
                 <Typography.Text strong>请求 URL</Typography.Text>
                 <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{s.requestUrl}</pre>
+                {s.requestBodyMasked ? (
+                  <>
+                    <Typography.Text strong>
+                      {s.requestMethod === "GET" ? "请求参数" : "请求体"}
+                    </Typography.Text>
+                    <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, maxHeight: 200, overflow: "auto", background: "rgba(0,0,0,0.04)", padding: 8, borderRadius: 4 }}>
+                      {(() => { try { return JSON.stringify(JSON.parse(s.requestBodyMasked), null, 2); } catch { return s.requestBodyMasked; } })()}
+                    </pre>
+                  </>
+                ) : null}
                 <Typography.Text strong>断言</Typography.Text>
                 <Table
                   size="small"

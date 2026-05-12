@@ -104,6 +104,7 @@ export default function ApiRegressionEnvironments() {
     form.setFieldsValue({
       name: r.name,
       baseUrl: r.baseUrl,
+      webhookUrl: r.webhookUrl || "",
       envVarList: variablesJsonToVarList(r.variables),
       envAutoVarList: variablesJsonToVarList(r.autoExtractedVariables),
     });
@@ -127,7 +128,7 @@ export default function ApiRegressionEnvironments() {
       body,
     }: {
       id: string;
-      body: { name: string; baseUrl: string; variables: string; autoExtractedVariables: string };
+      body: { name: string; baseUrl: string; variables: string; autoExtractedVariables: string; webhookUrl?: string };
     }) => apiRegressionApi.environments.update(id, body),
     {
       onSuccess: () => {
@@ -220,6 +221,7 @@ export default function ApiRegressionEnvironments() {
               baseUrl: v.baseUrl as string,
               variables: parsedManual.json,
               autoExtractedVariables: parsedAuto.json,
+              webhookUrl: (v.webhookUrl as string) || "",
             };
             if (editing) {
               update.mutate({ id: editing.id, body: payload });
@@ -233,6 +235,13 @@ export default function ApiRegressionEnvironments() {
           </Form.Item>
           <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true }]}>
             <Input placeholder="https://test-api.example.com" />
+          </Form.Item>
+          <Form.Item
+            name="webhookUrl"
+            label="企业微信通知"
+            extra="定时任务执行完成后，结果将发送到该 Webhook 对应的群聊（留空则不通知）"
+          >
+            <Input placeholder="企业微信机器人 Webhook URL" />
           </Form.Item>
           <Form.Item
             label="手动维护的变量"

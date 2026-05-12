@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import BACKEND_CWD
-from app.routers import api_regression, attachments, export, generate, modao, requirements, stats, test_cases
+from app.routers import api_regression, attachments, export, generate, modao, requirements, stats, tapd_bug, test_cases
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -27,6 +27,7 @@ async def lifespan(app: FastAPI):
     _ensure_data_dirs()
     _scheduler = BackgroundScheduler()
     api_regression.register_scheduled_jobs(_scheduler)
+    tapd_bug.register_tapd_bug_jobs(_scheduler)
     _scheduler.start()
     yield
     if _scheduler:
@@ -51,6 +52,7 @@ app.include_router(export.router, prefix="/api")
 app.include_router(generate.router, prefix="/api")
 app.include_router(attachments.router, prefix="/api")
 app.include_router(api_regression.router, prefix="/api")
+app.include_router(tapd_bug.router, prefix="/api")
 app.include_router(modao.router, prefix="/api")
 
 

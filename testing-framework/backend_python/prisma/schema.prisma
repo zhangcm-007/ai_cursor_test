@@ -54,6 +54,7 @@ model ApiEnvironment {
   variables               String   @default("{}")
   /// 调试「自动提取到环境」写入的键值；与 variables 合并参与请求，同名时 variables（手动）优先
   autoExtractedVariables  String   @default("{}")
+  webhookUrl              String   @default("")
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   runs      ApiRun[]
@@ -82,6 +83,7 @@ model ApiRegressionSchedule {
   collectionId   String
   collection     ApiCollection  @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   enabled        Boolean        @default(true)
+  skipHoliday    Boolean        @default(false)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 }
@@ -137,4 +139,26 @@ model ApiRunStep {
   responseBodyMasked String?
   assertionResults   String  @default("[]")
   durationMs         Int?
+}
+
+model TapdReportTemplate {
+  id              String   @id @default(cuid())
+  name            String   @default("")
+  description     String   @default("")
+  builtIn         Boolean  @default(false)
+  metrics         String   @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model TapdBugReportConfig {
+  id              String   @id @default(cuid())
+  name            String   @default("")
+  webhookUrl      String   @default("")
+  templateId      String?
+  filters         String   @default("{}")
+  cronExpression  String   @default("0 18 * * 1-5")
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
