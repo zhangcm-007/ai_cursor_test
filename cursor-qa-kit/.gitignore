@@ -1,0 +1,10 @@
+# 敏感配置（含数据库密码、GitLab Token 等，仅保留本地）
+skills/trace-analyzer/config.yaml
+**/.claude/settings.local.json
+*.local.json
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.swp
+*~

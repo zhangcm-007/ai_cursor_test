@@ -1,0 +1,144 @@
+# Trace Analyzer Configuration
+# Copy to config.yaml and fill in your environment details:
+#   cp config.example.yaml config.yaml
+
+# ========== ELK / Elasticsearch ==========
+# 每个环境独立配置 Kibana 地址、索引模式等
+elk:
+  environments:
+    dev:
+      kibana_url: "http://kibana-dev.example.com"
+      api_path: "/elasticsearch/_msearch"
+      query_type: "msearch"
+      kbn_version: "7.3.2"
+      index_pattern: "logstash-your-app-dev-*"
+      auth:
+        type: none
+
+    test:
+      kibana_url: "http://kibana-test.example.com"
+      api_path: "/elasticsearch/_msearch"
+      query_type: "msearch"
+      kbn_version: "7.3.2"
+      index_pattern: "logstash-your-app-test-*"
+      auth:
+        type: none
+
+    # prod:
+    #   kibana_url: "http://prod-kibana.example.com"
+    #   api_path: "/elasticsearch/_msearch"
+    #   query_type: "msearch"
+    #   kbn_version: "7.3.2"
+    #   index_pattern: "logstash-ai-finance-applog-prod-*"
+    #   auth:
+    #     type: token
+    #     token: "your-bearer-token"
+
+  # 字段映射 - 所有环境共用
+  fields:
+    trace_id: "traceId"
+    span_id: "spanId"
+    parent_span_id: "parentSpanId"
+    timestamp: "@timestamp"
+    service: "project_name"
+    level: "level"
+    message: "message"
+    logger: "loggerName"
+    thread: "thread"
+    hostname: "hostname"
+    source_class: "source.class"
+    source_method: "source.method"
+    source_file: "source.file"
+    source_line: "source.line"
+    extra_fields:
+      - "hostname"
+      - "source.class"
+      - "source.method"
+      - "source.file"
+      - "source.line"
+      - "type"
+      - "day"
+      - "threadId"
+
+  defaults:
+    time_range_minutes: 60
+    max_results: 500
+    sort_field: "@timestamp"
+    sort_order: "asc"
+
+  call_patterns:
+    - pattern: '(GET|POST|PUT|DELETE|PATCH)\s+(https?://[^\s]+|/[^\s{]+)'
+      type: "http_call"
+      extract: "url"
+    - pattern: '(?:status|statusCode|code)[=:]\s*(\d{3})'
+      type: "response_status"
+      extract: "status_code"
+    - pattern: '(?:duration|elapsed|took|cost|耗时)[=:]\s*(\d+)\s*(?:ms|毫秒)?'
+      type: "duration"
+      extract: "duration_ms"
+    - pattern: '(?:Exception|Error|异常)[:\s]+(.+?)(?:\n|$)'
+      type: "exception"
+      extract: "error_message"
+
+  trace_id_patterns:
+    - 'traceId[=:](\S+)'
+    - '\[traceId=(\S+?)\]'
+
+# ========== Database ==========
+# 每个环境独立配置，每个环境下可配置多种数据库类型
+database:
+  environments:
+    dev:
+      mongodb:
+        uri: "mongodb://user:password@mongo-dev.example.com:27017/admin"
+        # 或者分开配置:
+        # host: "mongo-dev.example.com"
+        # port: 27017
+        # username: "user"
+        # password: "password"
+        # auth_database: "admin"
+        database: "your-default-db"    # 默认数据库（可被 --database 参数覆盖）
+
+      mysql:
+        host: "mysql-dev.example.com"
+        port: 3306
+        username: "readonly-user"
+        password: "your-password"
+        database: "your_database"
+        charset: "utf8mb4"
+
+      sqlserver:
+        host: "sqlserver-dev.example.com"
+        port: 1433
+        username: "readonly-user"
+        password: "your-password"
+        database: "your_database"
+        charset: "utf8"
+
+    test:
+      mongodb:
+        uri: "mongodb://user:password@mongo-test.example.com:27017/admin"
+        database: "your-default-db"
+
+      mysql:
+        host: "mysql-test.example.com"
+        port: 3306
+        username: "readonly-user"
+        password: "your-password"
+        database: "your_database"
+        charset: "utf8mb4"
+
+      sqlserver:
+        host: "sqlserver-test.example.com"
+        port: 1433
+        username: "readonly-user"
+        password: "your-password"
+        database: "your_database"
+        charset: "utf8"
+
+# ========== GitLab ==========
+gitlab:
+  url: "https://gitlab.example.com"
+  token: "your-private-access-token"   # Scope: read_api
+  default_group: ""
+  service_project_map: {}
